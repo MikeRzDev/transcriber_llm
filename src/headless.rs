@@ -71,6 +71,7 @@ pub fn download_test_model() -> Result<()> {
         FILE.into(),
         dir,
         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         tx,
     );
     for event in rx {
@@ -130,6 +131,7 @@ fn run_headless_loop(rx: std::sync::mpsc::Receiver<Event>) -> Result<()> {
             Event::Unloading => eprintln!("releasing model…"),
             Event::Unloaded => eprintln!("model released"),
             Event::Decoding => eprintln!("decoding audio…"),
+            Event::DecodeProgress(_) => {}
             Event::AudioInfo { duration_secs } => eprintln!("audio: {duration_secs:.1}s"),
             Event::Progress(_) => {}
             Event::Segment(seg) => {

@@ -1,10 +1,13 @@
-//! Transcription engine: the job/segment/event types, plus the worker
-//! thread (`worker`) that owns the resident whisper context and the job
-//! runner (`run`) that drives whisper.cpp via whisper-rs.
+//! Transcription: the job/segment/event types, the worker thread
+//! (`worker`) that executes jobs, and the engine implementations behind
+//! the common `backend::Engine` interface — `backend/whisper_metal`
+//! drives whisper.cpp in-process via whisper-rs, `backend/mlx` runs
+//! directory (safetensors) models by shelling out to mlx-audio.
 
-mod run;
+mod backend;
 mod worker;
 
+pub use backend::mlx_audio_available;
 pub use worker::{spawn, Transcriber};
 
 use std::path::PathBuf;
@@ -61,9 +64,15 @@ pub enum Event {
     Unloading,
     Unloaded,
     Decoding,
+    /// 0–100 while ffmpeg rips the audio track out of a video (or
+    /// converts an exotic codec); negative means the total duration is
+    /// unknown (UI shows an indeterminate spinner)
+    DecodeProgress(i32),
     AudioInfo {
         duration_secs: f32,
     },
+    /// 0–100 while transcribing; negative means the engine reports no
+    /// fine-grained progress (UI shows an indeterminate spinner)
     Progress(i32),
     Segment(Segment),
     /// Re-issued full transcript with speaker labels, sent after a

@@ -1,6 +1,6 @@
-//! One transcription job, start to finish: ensure the model is resident,
-//! decode the media, run whisper over the planned chunks, and finalize
-//! diarization labels.
+//! The whisper.cpp backend (Metal-accelerated via whisper-rs): ensure
+//! the model is resident, decode the media, run whisper over the planned
+//! chunks, and finalize diarization labels.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,9 +10,42 @@ use std::time::Instant;
 
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-use super::{alternate_speakers, Event, Job, Segment};
+use super::Engine;
 use crate::audio;
 use crate::split::{self, EngineCaps};
+use crate::transcribe::{alternate_speakers, Event, Job, Segment};
+
+/// The whisper.cpp engine: loads GGML/GGUF files lazily and keeps the
+/// context resident between jobs until unloaded or a different model is
+/// requested.
+pub(super) struct WhisperEngine {
+    loaded: Option<(PathBuf, WhisperContext)>,
+}
+
+impl WhisperEngine {
+    pub(super) fn new() -> Self {
+        Self { loaded: None }
+    }
+}
+
+impl Engine for WhisperEngine {
+    fn run(
+        &mut self,
+        job: &Job,
+        events: &Sender<Event>,
+        cancel: &Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
+        run_job(job, &mut self.loaded, events, cancel)
+    }
+
+    fn loaded(&self) -> bool {
+        self.loaded.is_some()
+    }
+
+    fn unload(&mut self) {
+        self.loaded = None;
+    }
+}
 
 /// Reading the model file maps onto 0–80% of the load gauge; the
 /// remaining 20% is ggml parse + Metal upload.
@@ -199,7 +232,7 @@ fn collect_diarized(
     }
 }
 
-pub(super) fn run_job(
+fn run_job(
     job: &Job,
     loaded: &mut Option<(PathBuf, WhisperContext)>,
     events: &Sender<Event>,
@@ -218,7 +251,13 @@ pub(super) fn run_job(
     let (_, ctx) = loaded.as_ref().unwrap();
 
     let _ = events.send(Event::Decoding);
-    let decoded = audio::load_media(&job.audio)?;
+    let Some(decoded) = audio::load_media_with(&job.audio, Some(cancel.as_ref()), |p| {
+        let _ = events.send(Event::DecodeProgress(p));
+    })?
+    else {
+        let _ = events.send(Event::Cancelled);
+        return Ok(());
+    };
     let _ = events.send(Event::AudioInfo {
         duration_secs: decoded.duration_secs,
     });

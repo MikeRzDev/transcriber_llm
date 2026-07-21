@@ -1,6 +1,7 @@
 //! State and key handling for the Model management modal (Hugging Face
 //! hub): suggested list → search results → repo file view → download.
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -8,7 +9,16 @@ use std::time::{Duration, Instant};
 use crossterm::event::KeyCode;
 
 use crate::app::App;
-use crate::hub::{self, HubEvent, HubFile, RepoHit, SuggestedModel};
+use crate::config;
+use crate::hub::{self, DirVariant, HubEvent, HubFile, RepoHit, SuggestedModel};
+
+/// One repo's downloadables: directory-model variants first, then its
+/// single GGML/GGUF files. Rows are indexed across both lists.
+pub struct RepoView {
+    pub repo: String,
+    pub variants: Vec<DirVariant>,
+    pub files: Vec<HubFile>,
+}
 
 /// State of the Model management modal (search + download from Hugging Face).
 pub struct HubState {
@@ -21,31 +31,64 @@ pub struct HubState {
     pub listing_repo: Option<String>,
     /// None → suggested list; Some → search results
     pub results: Option<Vec<RepoHit>>,
-    /// Some((repo, files)) → file view of one repo
-    pub files: Option<(String, Vec<HubFile>)>,
+    /// Some → the downloadables of one repo
+    pub files: Option<RepoView>,
     pub suggested: Vec<SuggestedModel>,
-    /// Some((file, got_bytes, total_bytes)) while a download runs
-    pub download: Option<(String, u64, u64)>,
-    pub cancel: Arc<AtomicBool>,
+    /// Some while a download is running or paused
+    pub download: Option<Download>,
     /// Modal-local status/info line
     pub info: String,
+    /// Some while confirming deletion of a downloaded model
+    pub delete_prompt: Option<DeletePrompt>,
     /// Debounce marker: search fires shortly after typing pauses
     pub(crate) last_edit: Option<Instant>,
 }
 
+/// Yes/No confirmation shown before a downloaded model is deleted from disk.
+pub struct DeletePrompt {
+    pub name: String,
+    pub path: PathBuf,
+    pub size: u64,
+    pub yes_selected: bool,
+}
+
+/// A model download that is running or paused. A pause stops the worker but
+/// keeps the `.part` data; resuming spawns a fresh worker that continues it.
+pub struct Download {
+    /// On-disk base name (progress label + `.part` matching)
+    pub file: String,
+    /// Repo id, kept so a paused transfer can resume
+    pub repo: String,
+    /// Repo-relative path used to build the download URL (single-file
+    /// downloads only; empty for directory models)
+    pub remote_file: String,
+    /// Whole-repo directory model (MLX) rather than a single file
+    pub is_dir: bool,
+    /// Variant subfolder for directory downloads ("" = the whole repo)
+    pub subdir: String,
+    pub got: u64,
+    pub total: u64,
+    pub paused: bool,
+    pub cancel: Arc<AtomicBool>,
+    pub pause: Arc<AtomicBool>,
+}
+
 /// Whichever of the three hub lists is currently visible.
 pub enum HubList<'a> {
-    Files(&'a [HubFile]),
+    /// One repo's downloadables (variant folders first, then files)
+    Files(&'a RepoView),
     Results(&'a [RepoHit]),
-    Suggested(&'a [SuggestedModel]),
+    /// The pre-search view: downloaded models (checkmarked) merged with the
+    /// curated suggestions that aren't downloaded yet.
+    Default(Vec<DefaultEntry<'a>>),
 }
 
 impl HubList<'_> {
     pub fn len(&self) -> usize {
         match self {
-            HubList::Files(files) => files.len(),
+            HubList::Files(view) => view.variants.len() + view.files.len(),
             HubList::Results(results) => results.len(),
-            HubList::Suggested(suggested) => suggested.len(),
+            HubList::Default(entries) => entries.len(),
         }
     }
 
@@ -54,19 +97,29 @@ impl HubList<'_> {
     }
 }
 
-impl HubState {
-    /// Priority order: a repo's file view, then search results, then the
-    /// suggested list.
-    pub fn visible_list(&self) -> HubList<'_> {
-        if let Some((_, files)) = &self.files {
-            HubList::Files(files)
-        } else if let Some(results) = &self.results {
-            HubList::Results(results)
-        } else {
-            HubList::Suggested(&self.suggested)
-        }
-    }
+/// One row of the default hub view: either a model already on disk or a
+/// curated suggestion still to be downloaded.
+pub struct DefaultEntry<'a> {
+    /// Friendly display name (the suggestion's name, else the file name)
+    pub name: &'a str,
+    /// On-disk name — the download destination and library match key
+    /// (a file's base name, or the folder name for directory models)
+    pub file: String,
+    /// Repo to download from; None once the model is on disk
+    pub repo: Option<&'a str>,
+    /// Real size when downloaded, else the suggestion's estimate
+    pub size: String,
+    pub note: &'a str,
+    pub format: &'a str,
+    /// Directory model (whole-repo download, runs on the MLX engine)
+    pub is_dir: bool,
+    /// An engine in this build can run it
+    pub supported: bool,
+    /// Present in the models folder
+    pub installed: bool,
+}
 
+impl HubState {
     pub(crate) fn new() -> Self {
         Self {
             open: false,
@@ -78,8 +131,8 @@ impl HubState {
             files: None,
             suggested: hub::suggested_models(),
             download: None,
-            cancel: Arc::new(AtomicBool::new(false)),
             info: String::new(),
+            delete_prompt: None,
             last_edit: None,
         }
     }
@@ -91,6 +144,56 @@ impl App {
         self.hub.open = true;
         self.hub.selected = 0;
         self.hub.info.clear();
+    }
+
+    /// Priority order: a repo's file view, then search results, then the
+    /// default view (downloaded models + curated suggestions).
+    pub fn hub_visible_list(&self) -> HubList<'_> {
+        if let Some(view) = &self.hub.files {
+            HubList::Files(view)
+        } else if let Some(results) = &self.hub.results {
+            HubList::Results(results)
+        } else {
+            HubList::Default(self.hub_default_entries())
+        }
+    }
+
+    /// The pre-search rows: every downloaded model first (checkmarked, real
+    /// folder size), then the curated suggestions not yet on disk (greyed).
+    pub fn hub_default_entries(&self) -> Vec<DefaultEntry<'_>> {
+        let mut entries = Vec::new();
+        for m in &self.library.models {
+            let sug = self.hub.suggested.iter().find(|s| s.dest_name() == m.name);
+            entries.push(DefaultEntry {
+                name: sug.map_or(m.name.as_str(), |s| s.name.as_str()),
+                file: m.name.clone(),
+                repo: None,
+                size: crate::format::human_size(m.size_bytes),
+                note: sug.map_or("", |s| s.note.as_str()),
+                format: sug.map_or("", |s| s.format.as_str()),
+                is_dir: m.is_dir,
+                supported: true,
+                installed: true,
+            });
+        }
+        for s in &self.hub.suggested {
+            let dest = s.dest_name();
+            if self.library.models.iter().any(|m| m.name == dest) {
+                continue; // already listed among the downloaded models above
+            }
+            entries.push(DefaultEntry {
+                name: &s.name,
+                file: dest,
+                repo: Some(&s.repo),
+                size: s.size.clone(),
+                note: &s.note,
+                format: &s.format,
+                is_dir: s.is_dir_model(),
+                supported: s.supported(),
+                installed: false,
+            });
+        }
+        entries
     }
 
     /// Called every render loop: fires the debounced search and drains
@@ -113,11 +216,15 @@ impl App {
     }
 
     pub fn hub_key(&mut self, code: KeyCode) {
+        // A pending delete confirmation captures every key first.
+        if self.hub.delete_prompt.is_some() {
+            self.hub_delete_prompt_key(code);
+            return;
+        }
         match code {
             KeyCode::Esc => {
                 if self.hub.download.is_some() {
-                    self.hub.cancel.store(true, Ordering::Relaxed);
-                    self.hub.info = "Cancelling download…".into();
+                    self.hub_cancel_download();
                 } else if self.hub.files.is_some() {
                     self.hub.files = None;
                     self.hub.selected = 0;
@@ -132,16 +239,27 @@ impl App {
                     self.hub.open = false;
                 }
             }
+            // Download controls (guarded so the letters still type into search
+            // when nothing is downloading).
+            KeyCode::Char('p') if self.hub.download.is_some() => self.hub_toggle_pause(),
+            KeyCode::Char('c') if self.hub.download.is_some() => self.hub_cancel_download(),
             KeyCode::Up => self.hub.selected = self.hub.selected.saturating_sub(1),
             KeyCode::Down => {
-                let len = self.hub.visible_list().len();
+                let len = self.hub_visible_list().len();
                 if len > 0 {
                     self.hub.selected = (self.hub.selected + 1).min(len - 1);
                 }
             }
+            KeyCode::Delete => self.hub_request_delete(),
             KeyCode::Backspace if self.hub.files.is_none() => {
-                self.hub.input.pop();
-                self.hub_input_edited();
+                if self.hub.input.is_empty() {
+                    // Empty search box + a downloaded model selected → offer to
+                    // delete it (the Mac "delete" key reports as Backspace).
+                    self.hub_request_delete();
+                } else {
+                    self.hub.input.pop();
+                    self.hub_input_edited();
+                }
             }
             KeyCode::Char(c) if self.hub.files.is_none() => {
                 self.hub.input.push(c);
@@ -163,13 +281,25 @@ impl App {
 
     fn hub_enter(&mut self) {
         if self.hub.download.is_some() {
-            self.hub.info = "A download is already running — Esc cancels it".into();
+            self.hub.info = "A download is already running — p pauses · Esc cancels".into();
             return;
         }
-        // File view: download the selected file
-        if let Some((repo, files)) = &self.hub.files {
-            if let Some(f) = files.get(self.hub.selected) {
-                let (repo, file) = (repo.clone(), f.name.clone());
+        // File view: download the selected variant folder or single file
+        if let Some(view) = &self.hub.files {
+            if let Some(variant) = view.variants.get(self.hub.selected) {
+                if !hub::metal_available() {
+                    self.hub.info =
+                        "MLX directory models need an Apple Silicon Mac".into();
+                    return;
+                }
+                let repo = view.repo.clone();
+                let subdir = variant.subdir.clone();
+                self.hub_start_dir_download(repo, subdir);
+            } else if let Some(f) = view
+                .files
+                .get(self.hub.selected - view.variants.len())
+            {
+                let (repo, file) = (view.repo.clone(), f.name.clone());
                 self.hub_start_download(repo, file);
             }
             return;
@@ -184,16 +314,38 @@ impl App {
             }
             return;
         }
-        // Suggested list: download directly (if the format is runnable)
-        if let Some(s) = self.hub.suggested.get(self.hub.selected).cloned() {
-            if !s.supported() {
-                self.hub.info = format!(
-                    "{} is {}-format — whisper.cpp can only run GGML/GGUF models",
-                    s.name, s.format
-                );
-                return;
+        // Default view: select a downloaded model as the default, or start a
+        // download for a suggestion that isn't on disk yet.
+        let action = self.hub_default_entries().get(self.hub.selected).map(|e| {
+            (
+                e.installed,
+                e.supported,
+                e.is_dir,
+                e.repo.map(|r| r.to_string()),
+                e.file.clone(),
+                e.name.to_string(),
+                e.format.to_string(),
+            )
+        });
+        if let Some((installed, supported, is_dir, repo, file, name, format)) = action {
+            if installed {
+                if let Some(model) = self.library.models.iter().find(|m| m.name == file).cloned() {
+                    self.choose_model(model);
+                    self.hub.info = format!("Selected {file} as the default model");
+                }
+            } else if !supported {
+                self.hub.info = if format == "mlx" {
+                    format!("{name} is an MLX model — it needs an Apple Silicon Mac")
+                } else {
+                    format!("{name} is {format}-format — no engine here can run it")
+                };
+            } else if let Some(repo) = repo {
+                if is_dir {
+                    self.hub_start_dir_download(repo, String::new());
+                } else {
+                    self.hub_start_download(repo, file);
+                }
             }
-            self.hub_start_download(s.repo, s.file);
         }
     }
 
@@ -206,16 +358,212 @@ impl App {
             self.hub.info = format!("{base} is already in the models folder");
             return;
         }
-        self.hub.cancel = Arc::new(AtomicBool::new(false));
-        self.hub.download = Some((base.clone(), 0, 0));
-        self.hub.info = format!("Downloading {base}…");
-        hub::download(
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+        self.hub.download = Some(Download {
+            file: base.clone(),
+            repo: repo.clone(),
+            remote_file: file.clone(),
+            is_dir: false,
+            subdir: String::new(),
+            got: 0,
+            total: 0,
+            paused: false,
+            cancel: cancel.clone(),
+            pause: pause.clone(),
+        });
+        self.hub.info = format!("Downloading {base}… — p pauses · Esc cancels");
+        hub::download(repo, file, self.library.dir.clone(), cancel, pause, self.hub_tx.clone());
+    }
+
+    /// Download a directory model: every file of `repo` under `subdir`
+    /// ("" = the whole repo) into its own folder under the models dir.
+    /// Also the repair path: a directory failing its integrity manifest
+    /// is absent from the scan, so it arrives back here and only its
+    /// missing files are fetched.
+    fn hub_start_dir_download(&mut self, repo: String, subdir: String) {
+        let name = hub::variant_dir_name(&repo, &subdir);
+        if self.library.models.iter().any(|m| m.name == name) {
+            self.hub.info = format!("{name} is already in the models folder");
+            return;
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+        self.hub.download = Some(Download {
+            file: name.clone(),
+            repo: repo.clone(),
+            remote_file: String::new(),
+            is_dir: true,
+            subdir: subdir.clone(),
+            got: 0,
+            total: 0,
+            paused: false,
+            cancel: cancel.clone(),
+            pause: pause.clone(),
+        });
+        self.hub.info = format!("Downloading {name} (model folder)… — p pauses · Esc cancels");
+        hub::download_dir(
             repo,
-            file,
+            subdir,
             self.library.dir.clone(),
-            self.hub.cancel.clone(),
+            cancel,
+            pause,
             self.hub_tx.clone(),
         );
+    }
+
+    /// Toggle the running download between paused and resumed. Pausing asks the
+    /// worker to stop (it keeps the `.part` file); resuming spawns a fresh
+    /// worker that continues that partial file via an HTTP Range request.
+    fn hub_toggle_pause(&mut self) {
+        let Some(d) = &self.hub.download else {
+            return;
+        };
+        if d.paused {
+            let repo = d.repo.clone();
+            let remote_file = d.remote_file.clone();
+            let file = d.file.clone();
+            let is_dir = d.is_dir;
+            let subdir = d.subdir.clone();
+            let cancel = Arc::new(AtomicBool::new(false));
+            let pause = Arc::new(AtomicBool::new(false));
+            if let Some(d) = &mut self.hub.download {
+                d.paused = false;
+                d.cancel = cancel.clone();
+                d.pause = pause.clone();
+            }
+            self.hub.info = format!("Resuming {file}… — p pauses · Esc cancels");
+            if is_dir {
+                hub::download_dir(
+                    repo,
+                    subdir,
+                    self.library.dir.clone(),
+                    cancel,
+                    pause,
+                    self.hub_tx.clone(),
+                );
+            } else {
+                hub::download(
+                    repo,
+                    remote_file,
+                    self.library.dir.clone(),
+                    cancel,
+                    pause,
+                    self.hub_tx.clone(),
+                );
+            }
+        } else {
+            d.pause.store(true, Ordering::Relaxed);
+            let name = d.file.clone();
+            self.hub.info = format!("Pausing {name}…");
+        }
+    }
+
+    /// Cancel the running or paused download and discard its partial file.
+    fn hub_cancel_download(&mut self) {
+        let Some(d) = &self.hub.download else {
+            return;
+        };
+        if d.paused {
+            // No worker is running — clean up the partial data directly.
+            let name = d.file.clone();
+            let part = self.library.dir.join(format!("{name}.part"));
+            if d.is_dir {
+                let _ = std::fs::remove_dir_all(part);
+            } else {
+                let _ = std::fs::remove_file(part);
+            }
+            self.hub.download = None;
+            self.hub.info = format!("Cancelled {name}");
+        } else {
+            d.cancel.store(true, Ordering::Relaxed);
+            self.hub.info = "Cancelling download…".into();
+        }
+    }
+
+    /// Open the delete confirmation for the selected row — only downloaded
+    /// models (shown in the default view) can be deleted.
+    fn hub_request_delete(&mut self) {
+        if self.hub.files.is_some() || self.hub.results.is_some() || self.hub.download.is_some() {
+            return;
+        }
+        let target = self
+            .hub_default_entries()
+            .get(self.hub.selected)
+            .map(|e| (e.installed, e.file.clone(), e.name.to_string()));
+        let Some((installed, file, name)) = target else {
+            return;
+        };
+        if !installed {
+            self.hub.info = format!("{name} isn't downloaded — nothing to delete");
+            return;
+        }
+        if let Some(model) = self.library.models.iter().find(|m| m.name == file) {
+            self.hub.delete_prompt = Some(DeletePrompt {
+                name: model.name.clone(),
+                path: model.path.clone(),
+                size: model.size_bytes,
+                // A destructive action defaults to "No".
+                yes_selected: false,
+            });
+        }
+    }
+
+    fn hub_delete_prompt_key(&mut self, code: KeyCode) {
+        let Some(prompt) = &mut self.hub.delete_prompt else {
+            return;
+        };
+        match code {
+            KeyCode::Esc | KeyCode::Char('n') => {
+                self.hub.delete_prompt = None;
+            }
+            KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Tab
+            | KeyCode::Char('h')
+            | KeyCode::Char('l') => prompt.yes_selected = !prompt.yes_selected,
+            KeyCode::Char('y') => {
+                let prompt = self.hub.delete_prompt.take().unwrap();
+                self.delete_model_file(prompt.path, prompt.name);
+            }
+            KeyCode::Enter => {
+                let prompt = self.hub.delete_prompt.take().unwrap();
+                if prompt.yes_selected {
+                    self.delete_model_file(prompt.path, prompt.name);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Delete a model (file or directory), then rescan and keep the
+    /// default selection valid.
+    fn delete_model_file(&mut self, path: PathBuf, name: String) {
+        let result = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        match result {
+            Ok(()) => {
+                self.refresh_models();
+                self.adopt_selection();
+                // If the deleted model was the persisted default, move the
+                // default on to whatever adopt_selection settled on.
+                if self.config.default_model.as_deref() == Some(name.as_str()) {
+                    self.config.default_model =
+                        self.library.selected.as_ref().map(|m| m.name.clone());
+                    let _ = config::save(&self.config);
+                }
+                self.hub.info = format!("Deleted {name} ✓");
+                self.status = format!("Deleted {name} from {}", self.library.dir.display());
+            }
+            Err(e) => {
+                self.hub.info = format!("Delete of {name} failed: {e}");
+            }
+        }
+        let len = self.hub_visible_list().len();
+        self.hub.selected = self.hub.selected.min(len.saturating_sub(1));
     }
 
     pub(crate) fn handle_hub_event(&mut self, event: HubEvent) {
@@ -237,13 +585,22 @@ impl App {
                 self.hub.searching = false;
                 self.hub.info = format!("Search '{query}' failed: {error}");
             }
-            HubEvent::Files { repo, files } => {
+            HubEvent::Files {
+                repo,
+                files,
+                variants,
+            } => {
                 if self.hub.listing_repo.as_deref() == Some(repo.as_str()) {
                     self.hub.listing_repo = None;
-                    if files.is_empty() {
-                        self.hub.info = format!("No GGML/GGUF files in {repo}");
+                    if files.is_empty() && variants.is_empty() {
+                        self.hub.info =
+                            format!("No GGML/GGUF files or MLX model folders in {repo}");
                     } else {
-                        self.hub.files = Some((repo, files));
+                        self.hub.files = Some(RepoView {
+                            repo,
+                            variants,
+                            files,
+                        });
                         self.hub.selected = 0;
                         self.hub.info.clear();
                     }
@@ -254,7 +611,27 @@ impl App {
                 self.hub.info = format!("Listing {repo} failed: {error}");
             }
             HubEvent::Progress { file, got, total } => {
-                self.hub.download = Some((file, got, total));
+                if let Some(d) = &mut self.hub.download {
+                    if d.file == file {
+                        d.got = got;
+                        d.total = total;
+                    }
+                }
+            }
+            HubEvent::Paused { file, got } => {
+                // Only honour the pause if we're still asking for it: a stale
+                // event from a worker we've already resumed is ignored.
+                let mut paused_now = false;
+                if let Some(d) = &mut self.hub.download {
+                    if d.file == file && d.pause.load(Ordering::Relaxed) {
+                        d.paused = true;
+                        d.got = got;
+                        paused_now = true;
+                    }
+                }
+                if paused_now {
+                    self.hub.info = format!("Paused {file} — p resumes · Esc cancels");
+                }
             }
             HubEvent::Done { file, path } => {
                 self.hub.download = None;

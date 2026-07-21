@@ -1,15 +1,12 @@
-//! The long-lived worker thread. It owns the resident `WhisperContext`
-//! (lazy-loaded, kept between jobs, released on model switch) and turns
-//! `WorkerMsg`s into streamed `Event`s.
+//! The long-lived worker thread. It owns the backends (whisper.cpp keeps
+//! its resident context lazy-loaded between jobs; MLX is stateless) and
+//! turns `WorkerMsg`s into streamed `Event`s.
 
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
-use whisper_rs::WhisperContext;
-
-use super::run::run_job;
+use super::backend::Backends;
 use super::{Event, Job};
 
 enum WorkerMsg {
@@ -68,21 +65,22 @@ pub fn spawn(events: Sender<Event>) -> Transcriber {
         whisper_rs::install_logging_hooks();
 
         // Lazy by design: nothing is loaded until the first job arrives,
-        // then the context stays resident until an Unload or a job that
-        // needs a different model.
-        let mut loaded: Option<(PathBuf, WhisperContext)> = None;
+        // then whisper's context stays resident until an Unload or a job
+        // that needs a different model. MLX holds nothing between jobs.
+        let mut backends = Backends::new();
 
         while let Ok(msg) = rx_job.recv() {
             match msg {
                 WorkerMsg::Job(job) => {
-                    if let Err(e) = run_job(&job, &mut loaded, &events, &worker_cancel) {
+                    let engine = backends.for_model(&job.model);
+                    if let Err(e) = engine.run(&job, &events, &worker_cancel) {
                         let _ = events.send(Event::Error(format!("{e:#}")));
                     }
                 }
                 WorkerMsg::Unload => {
-                    if loaded.is_some() {
+                    if backends.loaded() {
                         let _ = events.send(Event::Unloading);
-                        loaded = None;
+                        backends.unload_all();
                         let _ = events.send(Event::Unloaded);
                     }
                 }

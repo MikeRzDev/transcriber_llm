@@ -8,7 +8,7 @@ impl App {
     pub fn handle_event(&mut self, event: Event) {
         match event {
             Event::LoadingModel(name) => {
-                self.status = format!("Loading {name} (Metal)…");
+                self.status = format!("Loading {name}…");
                 self.work = WorkState::LoadingModel { name, progress: 0 };
             }
             Event::LoadProgress(p) => {
@@ -28,8 +28,23 @@ impl App {
                 self.status = "Model unloaded — memory freed".into();
             }
             Event::Decoding => {
-                self.work = WorkState::Decoding;
-                self.status = "Decoding audio…".into();
+                self.work = WorkState::Decoding { progress: -1 };
+                let is_video = self
+                    .transcript
+                    .source
+                    .as_deref()
+                    .map(crate::audio::is_video_file)
+                    .unwrap_or(false);
+                self.status = if is_video {
+                    "Extracting audio from video…".into()
+                } else {
+                    "Decoding audio…".into()
+                };
+            }
+            Event::DecodeProgress(p) => {
+                if let WorkState::Decoding { progress } = &mut self.work {
+                    *progress = p;
+                }
             }
             Event::AudioInfo { duration_secs } => {
                 self.transcript.duration_secs = Some(duration_secs);

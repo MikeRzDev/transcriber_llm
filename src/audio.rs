@@ -16,11 +16,13 @@ use symphonia::core::probe::Hint;
 pub const WHISPER_SAMPLE_RATE: u32 = 16_000;
 
 pub const AUDIO_EXTENSIONS: &[&str] = &[
-    "wav", "mp3", "m4a", "aac", "flac", "ogg", "oga", "opus", "aiff", "aif", "caf", "wma",
+    "wav", "mp3", "m4a", "aac", "flac", "ogg", "oga", "opus", "aiff", "aif", "caf", "wma", "mka",
+    "weba", "amr", "ac3", "dts", "ape", "wv", "au", "mp2", "spx", "tta", "mpc", "ra", "gsm", "w64",
 ];
 
 pub const VIDEO_EXTENSIONS: &[&str] = &[
-    "mp4", "mov", "m4v", "mkv", "webm", "avi", "ts", "mts", "3gp", "flv", "wmv",
+    "mp4", "mov", "m4v", "mkv", "webm", "avi", "ts", "mts", "m2ts", "3gp", "3g2", "flv", "wmv",
+    "mpg", "mpeg", "m2v", "ogv", "vob", "asf", "f4v", "divx", "rm", "rmvb",
 ];
 
 pub struct DecodedAudio {
@@ -58,57 +60,170 @@ fn ffmpeg_available() -> bool {
         .unwrap_or(false)
 }
 
+/// Container duration in seconds via ffprobe; None when ffprobe is
+/// missing or the container doesn't declare one (progress goes
+/// indeterminate, extraction still works).
+fn probe_duration_secs(path: &Path) -> Option<f32> {
+    let output = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let secs: f32 = String::from_utf8_lossy(&output.stdout).trim().parse().ok()?;
+    (secs > 0.0).then_some(secs)
+}
+
 /// Extract/convert any media via ffmpeg, streaming raw 16 kHz mono f32
 /// PCM over stdout — no temp files, video streams dropped with -vn.
-fn ffmpeg_extract(path: &Path) -> Result<DecodedAudio> {
-    let output = std::process::Command::new("ffmpeg")
+/// Progress is derived from the PCM byte count against the ffprobe
+/// duration (-1 when unknown). Returns None if cancelled.
+fn ffmpeg_extract(
+    path: &Path,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+    on_progress: &mut dyn FnMut(i32),
+) -> Result<Option<DecodedAudio>> {
+    use std::io::Read;
+    use std::sync::atomic::Ordering;
+
+    let total_secs = probe_duration_secs(path);
+
+    let mut child = std::process::Command::new("ffmpeg")
         .args(["-v", "error", "-nostdin", "-i"])
         .arg(path)
         .args([
             "-vn", "-sn", "-map", "0:a:0", "-ac", "1", "-ar", "16000", "-f", "f32le", "-",
         ])
-        .output()
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .context("running ffmpeg")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("ffmpeg failed: {}", stderr.trim());
+    // Drain stderr on its own thread so a chatty ffmpeg can't deadlock
+    // against a full pipe while we read stdout.
+    let mut stderr = child.stderr.take().expect("stderr piped");
+    let drain = std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = stderr.read_to_string(&mut buf);
+        buf
+    });
+
+    let mut stdout = child.stdout.take().expect("stdout piped");
+    let mut pcm: Vec<u8> = Vec::new();
+    let mut chunk = vec![0u8; 256 * 1024];
+    let mut last_pct = i32::MIN;
+    loop {
+        if cancel.map(|c| c.load(Ordering::SeqCst)).unwrap_or(false) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = drain.join();
+            return Ok(None);
+        }
+        let n = stdout.read(&mut chunk).context("reading ffmpeg output")?;
+        if n == 0 {
+            break;
+        }
+        pcm.extend_from_slice(&chunk[..n]);
+        let pct = match total_secs {
+            Some(total) => {
+                let done_secs = (pcm.len() / 4) as f32 / WHISPER_SAMPLE_RATE as f32;
+                ((done_secs / total * 100.0) as i32).min(100)
+            }
+            None => -1,
+        };
+        if pct != last_pct {
+            last_pct = pct;
+            on_progress(pct);
+        }
     }
-    if output.stdout.is_empty() {
+    let status = child.wait().context("waiting for ffmpeg")?;
+    let stderr_text = drain.join().unwrap_or_default();
+
+    if !status.success() {
+        bail!("ffmpeg failed: {}", stderr_text.trim());
+    }
+    if pcm.is_empty() {
         bail!("ffmpeg produced no audio (does the file have an audio track?)");
     }
 
-    let samples: Vec<f32> = output
-        .stdout
+    let samples: Vec<f32> = pcm
         .chunks_exact(4)
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
         .collect();
     let duration_secs = samples.len() as f32 / WHISPER_SAMPLE_RATE as f32;
-    Ok(pad_short(DecodedAudio {
+    Ok(Some(pad_short(DecodedAudio {
         samples,
         duration_secs,
-    }))
+    })))
 }
 
 /// Load any audio or video file as 16 kHz mono f32. Video (and anything
 /// symphonia can't decode) goes through ffmpeg.
 pub fn load_media(path: &Path) -> Result<DecodedAudio> {
+    load_media_with(path, None, |_| {})
+        .map(|opt| opt.expect("load without a cancel flag cannot be cancelled"))
+}
+
+/// `load_media` with a cancel flag and an extraction-progress callback
+/// (percent 0–100, or -1 while the total duration is unknown). Returns
+/// None if cancelled.
+pub fn load_media_with(
+    path: &Path,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+    mut on_progress: impl FnMut(i32),
+) -> Result<Option<DecodedAudio>> {
+    let on_progress: &mut dyn FnMut(i32) = &mut on_progress;
     if is_video_file(path) {
         if ffmpeg_available() {
-            return ffmpeg_extract(path);
+            return ffmpeg_extract(path, cancel, on_progress);
         }
         // No ffmpeg: symphonia can still demux AAC/ALAC out of mp4/mov
-        return load_audio(path).context(
+        return decode_audio(path, cancel).context(
             "could not extract audio from video (install ffmpeg for full container support: brew install ffmpeg)",
         );
     }
-    match load_audio(path) {
+    match decode_audio(path, cancel) {
         Ok(audio) => Ok(audio),
-        Err(err) if ffmpeg_available() => {
-            ffmpeg_extract(path).map_err(|fferr| anyhow!("{err:#}; ffmpeg fallback: {fferr:#}"))
-        }
+        Err(err) if ffmpeg_available() => ffmpeg_extract(path, cancel, on_progress)
+            .map_err(|fferr| anyhow!("{err:#}; ffmpeg fallback: {fferr:#}")),
         Err(err) => Err(err),
     }
+}
+
+/// Write 16 kHz mono f32 samples as a PCM16 WAV — the hand-off format for
+/// engines that take an audio file rather than in-process samples.
+pub fn write_wav_16k_mono(path: &Path, samples: &[f32]) -> Result<()> {
+    use std::io::Write;
+    let mut f = std::io::BufWriter::new(File::create(path)?);
+    let data_len = (samples.len() * 2) as u32;
+    f.write_all(b"RIFF")?;
+    f.write_all(&(36 + data_len).to_le_bytes())?;
+    f.write_all(b"WAVEfmt ")?;
+    f.write_all(&16u32.to_le_bytes())?;
+    f.write_all(&1u16.to_le_bytes())?; // PCM
+    f.write_all(&1u16.to_le_bytes())?; // mono
+    f.write_all(&WHISPER_SAMPLE_RATE.to_le_bytes())?;
+    f.write_all(&(WHISPER_SAMPLE_RATE * 2).to_le_bytes())?; // byte rate
+    f.write_all(&2u16.to_le_bytes())?; // block align
+    f.write_all(&16u16.to_le_bytes())?; // bits per sample
+    f.write_all(b"data")?;
+    f.write_all(&data_len.to_le_bytes())?;
+    for s in samples {
+        let v = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+        f.write_all(&v.to_le_bytes())?;
+    }
+    f.flush()?;
+    Ok(())
 }
 
 fn pad_short(mut audio: DecodedAudio) -> DecodedAudio {
@@ -123,6 +238,16 @@ fn pad_short(mut audio: DecodedAudio) -> DecodedAudio {
 
 /// Decode any supported container/codec to 16 kHz mono f32.
 pub fn load_audio(path: &Path) -> Result<DecodedAudio> {
+    decode_audio(path, None)
+        .map(|opt| opt.expect("decode without a cancel flag cannot be cancelled"))
+}
+
+/// Symphonia decode with an optional cancel flag, checked per packet.
+/// Returns None if cancelled.
+fn decode_audio(
+    path: &Path,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<Option<DecodedAudio>> {
     let file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
@@ -160,6 +285,12 @@ pub fn load_audio(path: &Path) -> Result<DecodedAudio> {
     let mut sample_buf: Option<SampleBuffer<f32>> = None;
 
     loop {
+        if cancel
+            .map(|c| c.load(std::sync::atomic::Ordering::SeqCst))
+            .unwrap_or(false)
+        {
+            return Ok(None);
+        }
         let packet = match format.next_packet() {
             Ok(p) => p,
             Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
@@ -202,10 +333,10 @@ pub fn load_audio(path: &Path) -> Result<DecodedAudio> {
     let duration_secs = mono.len() as f32 / sample_rate as f32;
     let samples = resample_to_16k(mono, sample_rate)?;
 
-    Ok(pad_short(DecodedAudio {
+    Ok(Some(pad_short(DecodedAudio {
         samples,
         duration_secs,
-    }))
+    })))
 }
 
 fn resample_to_16k(input: Vec<f32>, from_rate: u32) -> Result<Vec<f32>> {
@@ -305,8 +436,14 @@ mod tests {
     fn extension_detection() {
         assert!(is_audio_file(Path::new("A.WAV"))); // case-insensitive
         assert!(is_audio_file(Path::new("x.m4a")));
+        assert!(is_audio_file(Path::new("x.mka")));
+        assert!(is_audio_file(Path::new("x.amr")));
         assert!(is_video_file(Path::new("x.mp4")));
         assert!(is_video_file(Path::new("x.MOV")));
+        assert!(is_video_file(Path::new("x.mpg")));
+        assert!(is_video_file(Path::new("x.m2ts")));
+        assert!(is_video_file(Path::new("x.vob")));
+        assert!(is_video_file(Path::new("x.rmvb")));
         assert!(!is_audio_file(Path::new("x.mp4"))); // video, not audio
         assert!(!is_media_file(Path::new("x.txt")));
         assert!(!is_media_file(Path::new("noext")));
@@ -371,6 +508,79 @@ mod tests {
         assert!((decoded.duration_secs - 1.5).abs() < 0.05);
         // 1.5s should resample to ~24000 samples at 16k
         assert!((decoded.samples.len() as f32 - 24_000.0).abs() < 500.0);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn wav_writer_round_trips_through_the_decoder() {
+        let path = temp_wav("written.wav");
+        let samples: Vec<f32> = sine(16_000, 440.0, 1.5, 0.5)
+            .iter()
+            .map(|&s| s as f32 / i16::MAX as f32)
+            .collect();
+        write_wav_16k_mono(&path, &samples).unwrap();
+
+        let decoded = load_audio(&path).unwrap();
+        assert_eq!(decoded.samples.len(), samples.len());
+        assert!((decoded.duration_secs - 1.5).abs() < 0.01);
+        let rms = |xs: &[f32]| (xs.iter().map(|s| s * s).sum::<f32>() / xs.len() as f32).sqrt();
+        assert!((rms(&decoded.samples) - rms(&samples)).abs() < 0.01);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    /// Render a short mp4 (sine audio + black video) with ffmpeg.
+    fn generate_test_mp4(path: &Path, secs: f32) -> bool {
+        std::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg(format!("sine=frequency=440:duration={secs}"))
+            .args(["-f", "lavfi", "-i"])
+            .arg(format!("color=c=black:s=64x64:d={secs}"))
+            .args(["-c:v", "mpeg4", "-c:a", "aac", "-shortest"])
+            .arg(path)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn extracts_video_audio_with_progress() {
+        if !ffmpeg_available() {
+            eprintln!("skipping: ffmpeg not installed");
+            return;
+        }
+        let path = temp_wav("gen.mp4");
+        assert!(generate_test_mp4(&path, 2.0), "ffmpeg fixture failed");
+
+        let mut reports: Vec<i32> = Vec::new();
+        let decoded = load_media_with(&path, None, |p| reports.push(p))
+            .unwrap()
+            .expect("not cancelled");
+        assert!((decoded.duration_secs - 2.0).abs() < 0.3);
+        // sine must survive the rip: check signal energy
+        let rms = (decoded.samples.iter().map(|s| s * s).sum::<f32>()
+            / decoded.samples.len() as f32)
+            .sqrt();
+        // ffmpeg's sine source generates at ~1/8 full scale (rms ~0.09)
+        assert!(rms > 0.05, "rms {rms} too low — audio track lost");
+        // progress is known (ffprobe), monotonic, and reaches the end
+        assert!(!reports.is_empty());
+        assert!(reports.windows(2).all(|w| w[0] <= w[1]));
+        assert!(*reports.last().unwrap() >= 90);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn extraction_honours_cancel() {
+        if !ffmpeg_available() {
+            eprintln!("skipping: ffmpeg not installed");
+            return;
+        }
+        let path = temp_wav("cancel.mp4");
+        assert!(generate_test_mp4(&path, 2.0), "ffmpeg fixture failed");
+
+        let cancel = std::sync::atomic::AtomicBool::new(true);
+        let result = load_media_with(&path, Some(&cancel), |_| {}).unwrap();
+        assert!(result.is_none(), "pre-cancelled load must return None");
         std::fs::remove_file(&path).unwrap();
     }
 

@@ -68,7 +68,38 @@ brew_dep() {
 brew_dep cmake cmake "builds whisper.cpp"
 brew_dep ffmpeg ffmpeg "video files and exotic audio codecs"
 
-# 6. compile and install the binary (into ~/.cargo/bin, reusing any
+# 6. MLX runtime — mlx-audio in an app-managed venv powers directory
+# (MLX) models: Parakeet, Qwen3-ASR, Canary, Whisper-MLX, … The app also
+# auto-installs this on first MLX use; doing it here front-loads the wait.
+if [[ "$(uname -m)" == "arm64" ]]; then
+  MLX_VENV="$HOME/Library/Application Support/transcribe-stt/mlx-venv"
+  probe_mlx() {
+    "$MLX_VENV/bin/python3" -c \
+      "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('mlx_audio') else 1)" \
+      2>/dev/null
+  }
+  if probe_mlx; then
+    echo "✓ mlx-audio runtime"
+  else
+    BASE_PY="$(command -v python3 || true)"
+    py_ok() {
+      [[ -n "$BASE_PY" ]] && "$BASE_PY" -c \
+        "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null
+    }
+    if ! py_ok; then
+      echo "→ installing python — runs the MLX engine (mlx-audio)…"
+      brew install python
+      BASE_PY="$(brew --prefix)/bin/python3"
+    fi
+    echo "→ installing mlx-audio runtime into $MLX_VENV…"
+    "$BASE_PY" -m venv "$MLX_VENV"
+    "$MLX_VENV/bin/python3" -m pip install --quiet --upgrade pip
+    "$MLX_VENV/bin/python3" -m pip install --quiet mlx-audio
+    probe_mlx && echo "✓ mlx-audio runtime"
+  fi
+fi
+
+# 7. compile and install the binary (into ~/.cargo/bin, reusing any
 # existing release artifacts in ./target)
 echo "→ building and installing transcribe-stt…"
 cargo install --path "$ROOT" --target-dir "$ROOT/target"

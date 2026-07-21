@@ -37,6 +37,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
     if app.hub.open {
         hub::draw_hub(frame, app);
+        if app.hub.delete_prompt.is_some() {
+            hub::draw_hub_delete_prompt(frame, app);
+        }
     }
     if app.settings.dir_picker.is_some() {
         dir_picker::draw_dir_picker(frame, app);

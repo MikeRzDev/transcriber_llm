@@ -1,5 +1,5 @@
 {
-  "comment": "The curated suggested-model list shown in Model management before searching. format 'ggml'/'gguf' entries are runnable by the whisper.cpp engine (Metal-accelerated on Apple Silicon) and download from https://huggingface.co/<repo>/resolve/main/<file>. format 'mlx' entries have no GGML build and are shown greyed out until the app grows an MLX engine.",
+  "comment": "The curated suggested-model list shown in Model management before searching. format 'ggml'/'gguf' entries are single files runnable by the whisper.cpp engine (Metal-accelerated on Apple Silicon), downloaded from https://huggingface.co/<repo>/resolve/main/<file>. format 'mlx' entries are whole-repo directory models (config.json + safetensors) run by the MLX engine via the mlx-audio CLI; the entire repo is downloaded into <models>/<repo-basename>/. MLX entries need Apple Silicon and are greyed out elsewhere.",
   "models": [
     {
       "name": "whisper-large-v3",
@@ -13,17 +13,17 @@
       "name": "parakeet-tdt-0.6b-v3",
       "repo": "mlx-community/parakeet-tdt-0.6b-v3",
       "file": "",
-      "size": "",
+      "size": "2.5 GB",
       "format": "mlx",
-      "note": "MLX only — no GGML build, needs an MLX engine"
+      "note": "NVIDIA Parakeet · 25 languages · fast · runs via mlx-audio"
     },
     {
-      "name": "canary-speechlm-mlx",
-      "repo": "speechllms/canary-speechlm-mlx",
+      "name": "Qwen3-ASR-1.7B-8bit",
+      "repo": "mlx-community/Qwen3-ASR-1.7B-8bit",
       "file": "",
-      "size": "",
+      "size": "2.5 GB",
       "format": "mlx",
-      "note": "MLX research code — no GGML build, needs an MLX engine"
+      "note": "Qwen3-ASR 1.7B (8-bit) · multilingual · runs via mlx-audio"
     }
   ]
 }

@@ -1,6 +1,6 @@
 # transcribe-stt
 
-A terminal speech-to-text client for [whisper.cpp](https://github.com/ggerganov/whisper.cpp) voice models with Metal GPU acceleration on Apple Silicon (installs as the **Transcribe Speech** app on macOS). Browse or drag-and-drop audio *and video* files, watch segments stream in live, and export transcripts in an LLM-optimized format. Transcription runs fully locally; the network is only touched when you download models from Hugging Face in the built-in model manager.
+A terminal speech-to-text client for [whisper.cpp](https://github.com/ggerganov/whisper.cpp) voice models with Metal GPU acceleration on Apple Silicon, plus an **MLX engine** that runs directory-shaped Apple-Silicon models (NVIDIA Parakeet, Qwen3-ASR, Canary, Whisper-MLX, …) via [mlx-audio](https://github.com/Blaizzy/mlx-audio) (installs as the **Transcribe Speech** app on macOS). Browse or drag-and-drop audio *and video* files, watch segments stream in live, and export transcripts in an LLM-optimized format. Transcription runs fully locally; the network is only touched when you download models from Hugging Face in the built-in model manager.
 
 ```
  transcribe-stt   ggml-large-v3.bin (3.0 GB)  •  Metal GPU
@@ -19,6 +19,7 @@ A terminal speech-to-text client for [whisper.cpp](https://github.com/ggerganov/
 - macOS on Apple Silicon (Metal), Xcode command line tools
 - Rust toolchain and cmake (`brew install rust cmake`)
 - ffmpeg for video files and exotic audio codecs (`brew install ffmpeg`); pure-audio formats work without it
+- for MLX models (Parakeet, Qwen3-ASR, …): the mlx-audio runtime — set up automatically, see below (needs any Python ≥ 3.10 to bootstrap from)
 
 ## Setup
 
@@ -55,8 +56,8 @@ transcribe-stt --headless --diarize -l en call.m4a
 transcribe-stt --download-test-model
 ```
 
-Supported audio: wav, mp3, m4a (AAC/ALAC), flac, ogg/vorbis, opus, aiff, caf, wma.
-Supported video (audio track is extracted automatically via ffmpeg): mp4, mov, m4v, mkv, webm, avi, ts, 3gp, flv, wmv.
+Supported audio: wav, mp3, m4a (AAC/ALAC), flac, ogg/vorbis, opus, aiff, caf, wma, mka, weba, amr, ac3, dts, ape, wv, au, mp2, spx, tta, mpc, ra, gsm, w64 (formats symphonia can't decode natively go through ffmpeg).
+Supported video (audio track is ripped automatically via ffmpeg, with a live progress gauge; cancellable like any job): mp4, mov, m4v, mkv, webm, avi, ts, mts, m2ts, 3gp, 3g2, flv, wmv, mpg, mpeg, m2v, ogv, vob, asf, f4v, divx, rm, rmvb.
 
 ### Drag & drop
 
@@ -68,7 +69,7 @@ Drop any audio or video file from Finder onto the terminal window and transcript
 | --- | --- |
 | `Tab` | Switch between file browser and transcript |
 | `Enter` | Open directory / transcribe selected file |
-| `m` | Model picker (lists `.bin` and `.gguf` in the models folder) |
+| `m` | Model picker (lists `.bin`/`.gguf` files and MLX model folders in the models folder) |
 | `s` | Settings: default model, models & output folders (via a built-in directory browser), model management, diarization, split mode, language (persisted) |
 | `d` | Toggle speaker diarization for the next transcription |
 | `e` | Re-export the transcript (exports also run automatically after every transcription) |
@@ -100,7 +101,7 @@ Settings → **Split mode** decides how long recordings are fed to the engine:
 - **silence** — the app chunks client-side at ~60 s, placing each cut at the quietest speech pause (25 ms RMS scan) within the 15 s before the target boundary. If speech is continuous, it falls back to a 0.5 s overlap and de-duplicates segments at the seam.
 - **fixed** — plain 60 s chunks with the 0.5 s overlap + dedup, no pause hunting.
 
-All chunking happens on the decoded 16 kHz f32 samples in memory — nothing is re-encoded, so splitting never costs quality. Timestamps are re-based so exports read as one continuous transcript, and diarization speaker labels carry across chunk boundaries. Engine capabilities are declared per engine (`split::EngineCaps`): whisper.cpp accepts unlimited length, and a future engine with a hard input window (e.g. MLX Canary) will force chunking automatically regardless of mode.
+All chunking happens on the decoded 16 kHz f32 samples in memory — nothing is re-encoded, so splitting never costs quality. Timestamps are re-based so exports read as one continuous transcript, and diarization speaker labels carry across chunk boundaries. Engine capabilities are declared per engine (`split::EngineCaps`): whisper.cpp accepts unlimited length, and a future engine with a hard input window will force chunking automatically regardless of mode. Split mode applies to the whisper.cpp engine only — mlx-audio ingests the whole file and windows internally, so the MLX engine bypasses the planner.
 
 ## Language
 
@@ -108,26 +109,32 @@ Whisper auto-detects the language from the first 30 seconds by default. If you k
 
 ## Models & settings
 
-Models live in `~/Documents/llm_transcribe/models` by default on macOS (`~/llm_transcribe/models` on Linux), with transcript exports next door in `…/llm_transcribe/output`. Press `s` to change the models folder, output folder (both open the built-in directory browser — navigate with `↑↓`/`Enter`, pick with "use this folder"), default model, diarization and language; all persist to `~/.config/transcribe-stt/config.toml` (`TRANSCRIBE_STT_MODELS` overrides the models folder). Changing the models folder rescans it: every supported model already inside joins the picker, and if none was selected the best available one (configured default, then large-v3, then first) is adopted automatically. If the previous folder still holds models, a dialog offers to move them into the newly selected folder (same-volume moves are instant renames; already-present files are skipped; the move runs in the background). The picker lists both whisper.cpp GGML `.bin` files and `.gguf` files, so other ggml-family voice models can be dropped in alongside whisper. Models load lazily: opening the app loads nothing (the header just shows file metadata), the selected model is loaded when the first transcription starts, stays resident for instant follow-up jobs, and is released as soon as you select a different model. Loading shows a real progress bar (byte-level file read, then ggml/Metal init) and can be cancelled with `c`; unloading reports start and finish in the status line. The demo model is **whisper large-v3**; on an M4 Pro it transcribes at ~0.2× realtime with Metal.
+Models live in `~/Documents/llm_transcribe/models` by default on macOS (`~/llm_transcribe/models` on Linux), with transcript exports next door in `…/llm_transcribe/output`. Press `s` to change the models folder, output folder (both open the built-in directory browser — navigate with `↑↓`/`Enter`, pick with "use this folder"), default model, diarization and language; all persist to `~/.config/transcribe-stt/config.toml` (`TRANSCRIBE_STT_MODELS` overrides the models folder). Changing the models folder rescans it: every supported model already inside joins the picker, and if none was selected the best available one (configured default, then large-v3, then first) is adopted automatically. If the previous folder still holds models, a dialog offers to move them into the newly selected folder (same-volume moves are instant renames; already-present entries are skipped; directory models move whole; the move runs in the background). The picker lists whisper.cpp GGML `.bin` files, `.gguf` files, and MLX model **folders** (a directory holding `config.json` plus safetensors weights), so any of them can also be dropped in by hand. Models load lazily: opening the app loads nothing (the header just shows file metadata), the selected model is loaded when the first transcription starts, stays resident for instant follow-up jobs, and is released as soon as you select a different model. Loading shows a real progress bar (byte-level file read, then ggml/Metal init) and can be cancelled with `c`; unloading reports start and finish in the status line. The demo model is **whisper large-v3**; on an M4 Pro it transcribes at ~0.2× realtime with Metal.
 
 ## Model management (in-app downloads)
 
 `s` → **Model management** opens the built-in Hugging Face browser:
 
-- A curated **suggested list** (from `assets/suggested_models.json`, embedded at build time) shows first. Entries the whisper.cpp engine can run download with one Enter; MLX-only entries (parakeet, canary) are greyed out until the app grows an MLX engine — there is no GGML build of them.
-- **Type to search** Hugging Face (debounced live search, most-downloaded first), restricted to the **speech-to-text** category (`automatic-speech-recognition`). Enter on a repo lists its GGML/GGUF files with sizes; Enter on a file downloads it into the models folder with a progress bar. Esc goes back a level, cancels a running download, or closes the modal. Note: conversion repos that never set a pipeline tag (e.g. tinydiarize) won't appear — download those manually into the models folder.
-- Downloads stream to `<name>.part` and are renamed into place only when complete, so an interrupted download never shows up as a usable model.
-- On Apple Silicon the header shows **Metal GPU** and runnable files are badged `Metal ✓`. There is no separate "Metal model" file: the Metal backend accelerates the *same* GGML file that runs on CPU elsewhere.
+- A curated **suggested list** (from `assets/suggested_models.json`, embedded at build time) shows first: whisper-large-v3 (GGML) plus MLX directory models (NVIDIA Parakeet, Qwen3-ASR). On Apple Silicon every entry downloads with one Enter; MLX entries are greyed out on other machines.
+- **Type to search** Hugging Face (debounced live search, most-downloaded first), restricted to the **speech-to-text** category (`automatic-speech-recognition`). Enter on a repo lists what it offers: MLX model **folders** first (the repo root, or per-variant subfolders — e.g. quantizations — each holding its own `config.json` + weights, each downloadable as an individual model), then its GGML/GGUF files with sizes. Enter downloads the selected entry into the models folder with a progress bar. Esc goes back a level, cancels a running download, or closes the modal. Note: conversion repos that never set a pipeline tag (e.g. tinydiarize) won't appear — download those manually into the models folder.
+- Single files stream to `<name>.part` and are renamed into place only when complete; directory models stream file-by-file into `<name>.part/` (aggregated progress, pause/resume across files) and the folder is renamed into place only when every file is complete — an interrupted download never shows up as a usable model. Variant subfolders land as `<repo>-<variant>/`.
+- Every downloaded model folder carries an integrity manifest (`.manifest.json`: the exact file list with sizes). A folder that later fails the check — a file deleted or truncated — is pulled from the library, and re-downloading it fetches **only the missing files** before restoring it.
+- On Apple Silicon the header shows **Metal GPU** plus whether mlx-audio is installed; runnable files are badged `Metal ✓`, model folders `MLX`. There is no separate "Metal model" file: the Metal backend accelerates the *same* GGML file that runs on CPU elsewhere.
+
+## MLX engine (Parakeet, Qwen3-ASR, Canary, Whisper-MLX, …)
+
+Directory models run on the MLX engine, which shells out to [mlx-audio](https://github.com/Blaizzy/mlx-audio)'s STT CLI (`python -m mlx_audio.stt.generate`) — one runner for every MLX model family, so new families need no new engine code. Requirements: Apple Silicon; the runtime is **self-provisioning** — `scripts/install.sh` sets it up ahead of time, and if it's missing the first MLX job installs mlx-audio into an app-managed venv (`~/Library/Application Support/transcribe-stt/mlx-venv`, so it never fights the system/Homebrew Python) with a status spinner, cancellable like any job. A Python where mlx-audio is already installed is used as-is. Detection is a fast import probe (no model load); Model management shows the runtime status in its header. Audio is decoded by the same in-app pipeline as whisper (so video and exotic codecs work identically) and handed over as a temp 16 kHz WAV; the subprocess loads the model per job (cold start), progress is an indeterminate spinner, cancel kills the subprocess, and its JSON output (`segments` or `sentences`, with optional `speaker_id`) is mapped back into the same streamed segment/export pipeline. The whisper.cpp path is untouched: tdrz diarization, split modes, and the resident-context fast path remain whisper-only.
 
 ## Testing
 
 ```sh
-cargo test                    # 71 unit tests, fast and hermetic
+cargo test                    # 94 unit tests, fast and hermetic
 cargo test -- --ignored       # 3 transcription e2e tests (real model, Metal, ffmpeg,
-                              # diarization) + 1 live Hugging Face search/download test
+                              # diarization) + 2 live Hugging Face tests (single-file
+                              # download, whole-folder MLX download with manifest)
 ```
 
-Unit tests cover audio decode/downmix/resampling, model discovery, config parsing and platform defaults, drop-path parsing (quotes, backslash escapes, `file://` URLs), the app state machine including auto-export, the directory picker, the model-management modal (search input, navigation, download events, MLX gating), Hub API response parsing, and every export format. The e2e tests run the actual binary headless against the demo WAV and MP4.
+Unit tests cover audio decode/downmix/resampling (incl. the WAV writer round trip), model discovery (files and MLX folders, manifest integrity), config parsing and platform defaults, drop-path parsing (quotes, backslash escapes, `file://` URLs), the app state machine including auto-export, the directory picker, the model-management modal (search input, navigation, download events, variant folders, platform gating), Hub API response parsing (file listing, variant detection), mlx-audio JSON output mapping, and every export format. The e2e tests run the actual binary headless against the demo WAV and MP4. Live MLX inference needs mlx-audio and a downloaded model, so it stays a manual test.
 
 ## Architecture
 
@@ -137,11 +144,11 @@ The crate is a library (`transcribe_stt`) plus a thin binary: `src/main.rs` only
 - `src/app.rs` + `src/app/` — application state and update logic (Elm-style). `App` is composed of per-concern sub-state, each with its logic and key handling beside it:
   - `browser.rs` (`FileBrowser` — directory listing/navigation), `library.rs` (`ModelLibrary` + `ModelPicker`), `settings.rs` (`SettingsUi`, `SettingsRow`, directory picker, move-models prompt), `transcript.rs` (`TranscriptState` — segments, scroll/follow), `hub_state.rs` (`HubState` — the Model management modal), `events.rs` (worker-event handling incl. auto-export), `drop.rs` (drag-and-drop path parsing + the `DropDetector` key-burst fallback), `keys.rs` (the modal-priority key router)
 - `src/ui.rs` + `src/ui/` — rendering, one file per widget/modal, all reading `&App` (scroll clamping runs in the update phase, never during draw); `theme.rs` holds the shared colors/spinner/highlight style, `layout.rs` the screen regions
-- `src/transcribe.rs` + `src/transcribe/` — `worker.rs`: the worker thread owning the `WhisperContext`; models load lazily on the first job, stay resident between jobs, and unload when the user switches models; `run.rs`: one job start-to-finish — segments/progress stream back over a channel, cancellation via whisper's abort callback
-- `src/audio.rs` — symphonia decode (audio) → mono downmix → rubato sinc resample to 16 kHz; video and unsupported codecs go through ffmpeg, which streams raw 16 kHz mono f32 over stdout (no temp files)
-- `src/hub.rs` + `src/hub/` — Model management backend: `api.rs` (Hugging Face search + repo file listing, serde-typed responses) and `download.rs` (streaming `.part` downloads with retry), each on worker threads; the suggested list is embedded from `assets/suggested_models.json`
+- `src/transcribe.rs` + `src/transcribe/` — `worker.rs`: the worker thread executing jobs; `backend.rs`: the common `Engine` interface every backend implements, plus the model-shape routing (`Backends::for_model` — a directory routes to MLX, a file to whisper); `backend/whisper_metal.rs`: whisper.cpp via whisper-rs, resident context between jobs, cancellation via whisper's abort callback; `backend/mlx.rs`: the mlx-audio subprocess runner (runtime probe, temp-WAV hand-off, JSON parsing, kill-on-cancel). New backends slot in as new submodules behind the same trait
+- `src/audio.rs` — symphonia decode (audio) → mono downmix → rubato sinc resample to 16 kHz; video and unsupported codecs go through ffmpeg, which streams raw 16 kHz mono f32 over stdout (no temp files) with byte-accurate extraction progress against the ffprobe duration; both paths are cancellable mid-decode; plus the 16 kHz WAV writer used to hand audio to subprocess engines
+- `src/hub.rs` + `src/hub/` — Model management backend: `api.rs` (Hugging Face search, repo file listing, directory-variant detection, serde-typed responses) and `download.rs` (streaming `.part` downloads with retry; whole-folder downloads with aggregated progress, integrity manifest, and missing-file repair), each on worker threads; the suggested list is embedded from `assets/suggested_models.json`
 - `src/split.rs` — long-audio chunk planner (engine capability descriptor, silence-aware cut placement, overlap fallback)
 - `src/export.rs` — all transcript output formats (llm.md, JSON via serde_json, txt, srt)
 - `src/config.rs` — persisted settings (`~/.config/transcribe-stt/config.toml`), strict TOML via serde with a lenient fallback parser for legacy hand-edited files
-- `src/models.rs` / `src/format.rs` / `src/stats.rs` — local model scanning + default-model selection, shared time/size formatting, live process stats
+- `src/models.rs` / `src/format.rs` / `src/stats.rs` — local model scanning (files and MLX folders, integrity-manifest checks) + default-model selection, shared time/size formatting, live process stats
 - whisper.cpp log output is routed through the `log` crate so it can't corrupt the TUI

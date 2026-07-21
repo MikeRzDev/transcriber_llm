@@ -14,7 +14,7 @@ mod transcript;
 pub(crate) use browser::file_name;
 pub use browser::{FileBrowser, FileEntry};
 pub use drop::DropDetector;
-pub use hub_state::{HubList, HubState};
+pub use hub_state::{Download, HubList, HubState, RepoView};
 pub use library::{ModelLibrary, ModelPicker};
 pub use settings::{DirPicker, DirRow, DirTarget, MovePrompt, SettingsRow, SettingsUi};
 pub use transcript::TranscriptState;
@@ -46,7 +46,9 @@ pub enum WorkState {
     },
     /// Resident model being released after a model switch
     UnloadingModel,
-    Decoding,
+    Decoding {
+        progress: i32,
+    },
     Transcribing {
         progress: i32,
     },
@@ -86,7 +88,12 @@ impl App {
         let selected_model = model
             .map(|p| ModelFile {
                 name: file_name(&p),
-                size_bytes: std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0),
+                size_bytes: if p.is_dir() {
+                    models::dir_size(&p)
+                } else {
+                    std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0)
+                },
+                is_dir: p.is_dir(),
                 path: p,
             })
             .or_else(|| {
@@ -200,7 +207,8 @@ mod tests {
     use crate::transcribe::{Event, Segment};
     use crossterm::event::KeyCode;
     use std::path::PathBuf;
-    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     /// Serializes tests that point TRANSCRIBE_STT_CONFIG at their tempdir:
@@ -335,6 +343,7 @@ mod tests {
     fn hub_modal_typing_navigation_and_esc_layers() {
         let dir = tempdir();
         let mut app = test_app(dir.clone());
+        app.library.dir = dir.clone(); // empty models folder → default view is the 3 suggestions
 
         app.open_hub();
         assert!(app.hub.open);
@@ -370,22 +379,200 @@ mod tests {
     }
 
     #[test]
-    fn hub_enter_on_mlx_suggestion_explains_instead_of_downloading() {
+    fn hub_enter_on_unsupported_suggestion_explains_instead_of_downloading() {
         let dir = tempdir();
         let mut app = test_app(dir.clone());
+        app.library.dir = dir.clone(); // empty folder → default rows match suggested order
         app.open_hub();
 
-        let mlx_index = app
-            .hub
-            .suggested
-            .iter()
-            .position(|s| !s.supported())
-            .unwrap();
-        app.hub.selected = mlx_index;
+        // No engine runs this format, so Enter must explain, not download.
+        app.hub.suggested.push(crate::hub::SuggestedModel {
+            name: "some-nemo-model".into(),
+            repo: "x/some-nemo-model".into(),
+            file: String::new(),
+            size: "1 GB".into(),
+            format: "nemo".into(),
+            note: String::new(),
+        });
+        let index = app.hub_default_entries().len() - 1;
+        app.hub.selected = index;
         app.hub_key(KeyCode::Enter);
         assert!(app.hub.download.is_none());
-        assert!(app.hub.info.contains("mlx-format"));
+        assert!(app.hub.info.contains("no engine"), "{}", app.hub.info);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// On Apple Silicon the MLX suggestions are real downloads: the
+    /// default rows mark them as directory models with the repo basename
+    /// as their on-disk name.
+    #[test]
+    fn hub_mlx_suggestions_are_dir_models_named_after_the_repo() {
+        let dir = tempdir();
+        let mut app = test_app(dir.clone());
+        app.library.dir = dir.clone();
+        app.open_hub();
+
+        let entries = app.hub_default_entries();
+        let parakeet = entries
+            .iter()
+            .find(|e| e.name == "parakeet-tdt-0.6b-v3")
+            .unwrap();
+        assert!(parakeet.is_dir);
+        assert!(!parakeet.installed);
+        assert_eq!(parakeet.file, "parakeet-tdt-0.6b-v3");
+        assert_eq!(parakeet.supported, crate::hub::metal_available());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn hub_dir_download_done_scans_the_new_directory_model() {
+        let dir = tempdir();
+        let mut app = test_app(dir.clone());
+        app.library.dir = dir.clone();
+        app.library.selected = None;
+        app.open_hub();
+
+        // The finished download sits on disk as a complete model folder
+        let model = dir.join("parakeet-tdt-0.6b-v3");
+        std::fs::create_dir_all(&model).unwrap();
+        std::fs::write(model.join("config.json"), b"{}").unwrap();
+        std::fs::write(model.join("model.safetensors"), vec![0u8; 500]).unwrap();
+
+        let mut d = fake_download("parakeet-tdt-0.6b-v3", Arc::new(AtomicBool::new(false)));
+        d.is_dir = true;
+        d.remote_file = String::new();
+        app.hub.download = Some(d);
+        app.handle_hub_event(HubEvent::Done {
+            file: "parakeet-tdt-0.6b-v3".into(),
+            path: model.clone(),
+        });
+
+        assert!(app.hub.download.is_none());
+        let found = app
+            .library
+            .models
+            .iter()
+            .find(|m| m.name == "parakeet-tdt-0.6b-v3")
+            .expect("dir model scanned");
+        assert!(found.is_dir);
+        assert_eq!(found.size_bytes, 502);
+        // nothing was selected, so the arrival becomes the selection
+        assert_eq!(
+            app.library.selected.as_ref().map(|m| m.name.as_str()),
+            Some("parakeet-tdt-0.6b-v3")
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn hub_file_view_lists_variants_before_files() {
+        let dir = tempdir();
+        let mut app = test_app(dir.clone());
+        app.library.dir = dir.clone();
+        app.open_hub();
+
+        app.hub.listing_repo = Some("owner/multi".into());
+        app.handle_hub_event(HubEvent::Files {
+            repo: "owner/multi".into(),
+            files: vec![crate::hub::HubFile {
+                name: "ggml-tiny.bin".into(),
+                size_bytes: 75,
+            }],
+            variants: vec![crate::hub::DirVariant {
+                subdir: "8bit".into(),
+                size_bytes: 1000,
+                file_count: 3,
+            }],
+        });
+        let view = app.hub.files.as_ref().expect("file view opens");
+        assert_eq!(view.variants.len(), 1);
+        assert_eq!(view.files.len(), 1);
+        assert_eq!(app.hub_visible_list().len(), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn hub_default_view_lists_downloaded_models_with_folder_size() {
+        let _guard = lock_env(); // Enter → choose_model persists config
+        let dir = tempdir();
+        std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
+        // A model that isn't in the curated list, plus the suggested large-v3.
+        std::fs::write(dir.join("ggml-tiny.bin"), vec![0u8; 2048]).unwrap();
+        std::fs::write(dir.join("ggml-large-v3.bin"), vec![0u8; 4096]).unwrap();
+        let mut app = test_app(dir.clone());
+        app.library.dir = dir.clone();
+        app.open_hub();
+
+        let entries = app.hub_default_entries();
+        // Downloaded models come first, checkmarked, with their real folder size.
+        let tiny = entries.iter().find(|e| e.file == "ggml-tiny.bin").unwrap();
+        assert!(tiny.installed);
+        assert_eq!(tiny.name, "ggml-tiny.bin"); // not in the curated list → file name
+        assert_eq!(tiny.size, "2 KB");
+        // A suggestion that's on disk shows its friendly name, still installed.
+        let large = entries.iter().find(|e| e.file == "ggml-large-v3.bin").unwrap();
+        assert!(large.installed);
+        assert_eq!(large.name, "whisper-large-v3");
+        // The two downloaded models precede the two remaining (MLX) suggestions,
+        // which are greyed out (not installed).
+        assert!(entries[0].installed && entries[1].installed);
+        assert_eq!(entries.iter().filter(|e| !e.installed).count(), 2);
+        let first_file = entries[0].file.to_string();
+        drop(entries);
+        // Enter on a downloaded row selects it as the default model.
+        app.hub.selected = 0;
+        app.hub_key(KeyCode::Enter);
+        assert_eq!(app.config.default_model.as_deref(), Some(first_file.as_str()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn hub_delete_prompts_then_removes_the_file_on_confirm() {
+        let _guard = lock_env(); // deleting the default persists a new one
+        let dir = tempdir();
+        std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
+        std::fs::write(dir.join("ggml-tiny.bin"), vec![0u8; 1024]).unwrap();
+        let mut app = test_app(dir.clone());
+        app.library.dir = dir.clone();
+        app.open_hub();
+
+        // The downloaded model heads the default view.
+        app.hub.selected = 0;
+        app.hub_key(KeyCode::Delete);
+        let prompt = app.hub.delete_prompt.as_ref().expect("prompt opens");
+        assert_eq!(prompt.name, "ggml-tiny.bin");
+        assert!(!prompt.yes_selected); // destructive default is "No"
+        assert!(dir.join("ggml-tiny.bin").exists()); // nothing deleted yet
+
+        // Esc cancels without touching the file.
+        app.hub_key(KeyCode::Esc);
+        assert!(app.hub.delete_prompt.is_none());
+        assert!(dir.join("ggml-tiny.bin").exists());
+
+        // Re-open and confirm with the 'y' shortcut.
+        app.hub_key(KeyCode::Delete);
+        app.hub_key(KeyCode::Char('y'));
+        assert!(app.hub.delete_prompt.is_none());
+        assert!(!dir.join("ggml-tiny.bin").exists());
+        assert!(app.hub.info.contains("Deleted"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Build an in-flight download entry for tests, sharing the pause flag so
+    /// the test can observe pause requests.
+    fn fake_download(file: &str, pause: Arc<AtomicBool>) -> Download {
+        Download {
+            file: file.into(),
+            repo: "repo".into(),
+            remote_file: file.into(),
+            is_dir: false,
+            subdir: String::new(),
+            got: 0,
+            total: 0,
+            paused: false,
+            cancel: Arc::new(AtomicBool::new(false)),
+            pause,
+        }
     }
 
     #[test]
@@ -395,12 +582,15 @@ mod tests {
         app.library.dir = dir.clone();
         app.open_hub();
 
+        // Progress only updates an already-running download.
+        app.hub.download = Some(fake_download("ggml-x.bin", Arc::new(AtomicBool::new(false))));
         app.handle_hub_event(HubEvent::Progress {
             file: "ggml-x.bin".into(),
             got: 5,
             total: 10,
         });
-        assert_eq!(app.hub.download, Some(("ggml-x.bin".into(), 5, 10)));
+        let d = app.hub.download.as_ref().unwrap();
+        assert_eq!((d.file.as_str(), d.got, d.total), ("ggml-x.bin", 5, 10));
 
         // Done rescans the models folder and selects the new model if none was
         let path = dir.join("ggml-x.bin");
@@ -421,6 +611,39 @@ mod tests {
             error: "boom".into(),
         });
         assert!(app.hub.info.contains("boom"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn hub_pause_then_cancel_clears_state_and_partial_file() {
+        let dir = tempdir();
+        let mut app = test_app(dir.clone());
+        app.library.dir = dir.clone();
+        app.open_hub();
+
+        let pause = Arc::new(AtomicBool::new(false));
+        app.hub.download = Some(fake_download("ggml-x.bin", pause.clone()));
+
+        // 'p' asks the worker to pause: the shared flag flips, state not yet paused.
+        app.hub_key(KeyCode::Char('p'));
+        assert!(pause.load(Ordering::Relaxed));
+        assert!(!app.hub.download.as_ref().unwrap().paused);
+
+        // The worker acknowledges with Paused (honoured only while the flag holds).
+        app.handle_hub_event(HubEvent::Paused {
+            file: "ggml-x.bin".into(),
+            got: 4,
+        });
+        let d = app.hub.download.as_ref().unwrap();
+        assert!(d.paused);
+        assert_eq!(d.got, 4);
+
+        // Cancelling a paused download clears state and removes the partial file.
+        std::fs::write(dir.join("ggml-x.bin.part"), b"partial").unwrap();
+        app.hub_key(KeyCode::Esc);
+        assert!(app.hub.download.is_none());
+        assert!(!dir.join("ggml-x.bin.part").exists());
+        assert!(app.hub.info.contains("Cancelled"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -618,6 +841,7 @@ mod tests {
             path: dir.join("ggml-x.bin"),
             name: "ggml-x.bin".into(),
             size_bytes: 4,
+            is_dir: false,
         };
         app.choose_model(model.clone());
         assert_eq!(app.config.default_model.as_deref(), Some("ggml-x.bin"));

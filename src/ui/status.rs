@@ -9,13 +9,23 @@ use crate::ui::theme::{spinner_frame, ACCENT, DIM};
 
 pub(super) fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     match &app.work {
-        WorkState::Transcribing { progress } | WorkState::LoadingModel { progress, .. } => {
-            let loading = matches!(app.work, WorkState::LoadingModel { .. });
+        // A negative progress means the engine reports none (MLX) or the
+        // media duration is unknown (ffmpeg extraction) — fall through to
+        // the indeterminate spinner below.
+        WorkState::Transcribing { progress }
+        | WorkState::LoadingModel { progress, .. }
+        | WorkState::Decoding { progress }
+            if *progress >= 0 =>
+        {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Length(30), Constraint::Min(10)])
                 .split(area);
-            let color = if loading { Color::Yellow } else { ACCENT };
+            let color = match app.work {
+                WorkState::LoadingModel { .. } => Color::Yellow,
+                WorkState::Decoding { .. } => Color::Cyan,
+                _ => ACCENT,
+            };
             let gauge = Gauge::default()
                 .gauge_style(Style::default().fg(color).bg(Color::Black))
                 .ratio((*progress as f64 / 100.0).clamp(0.0, 1.0))
@@ -23,7 +33,10 @@ pub(super) fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
             frame.render_widget(gauge, chunks[0]);
             frame.render_widget(Paragraph::new(format!(" {}", app.status)), chunks[1]);
         }
-        WorkState::UnloadingModel | WorkState::Decoding => {
+        WorkState::UnloadingModel
+        | WorkState::Decoding { .. }
+        | WorkState::Transcribing { .. }
+        | WorkState::LoadingModel { .. } => {
             frame.render_widget(
                 Paragraph::new(format!("{} {}", spinner_frame(app.tick), app.status))
                     .style(Style::default().fg(Color::Yellow)),

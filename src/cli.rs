@@ -2,15 +2,17 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-/// Terminal speech-to-text client for whisper.cpp models (Metal).
+/// Terminal speech-to-text client for whisper.cpp (Metal) and MLX
+/// (mlx-audio) voice models.
 #[derive(Parser, Debug)]
 #[command(name = "transcribe-stt", version)]
 pub struct Args {
     /// Directory to browse, or audio file to transcribe
     pub path: Option<PathBuf>,
 
-    /// Model to use (.bin / .gguf); default: auto-detect in the models folder
-    #[arg(short, long, value_name = "FILE")]
+    /// Model to use: a .bin/.gguf file (whisper.cpp) or an MLX model
+    /// folder; default: auto-detect in the models folder
+    #[arg(short, long, value_name = "FILE|DIR")]
     pub model: Option<PathBuf>,
 
     /// Transcribe PATH without the TUI, print segments to stdout

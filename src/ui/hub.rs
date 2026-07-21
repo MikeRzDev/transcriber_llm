@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
-use crate::app::{App, HubList};
+use crate::app::{App, Download, HubList};
 use crate::format::{fmt_count, human_size};
 use crate::hub;
 use crate::ui::layout::centered_rect;
@@ -38,7 +38,7 @@ pub(super) fn draw_hub(frame: &mut Frame, app: &App) {
     draw_search_bar(frame, rows[0], app);
     draw_backend_line(frame, rows[1], app);
 
-    let visible = app.hub.visible_list();
+    let visible = app.hub_visible_list();
     let (header, items) = list_content(app, &visible);
     frame.render_widget(
         Paragraph::new(Span::styled(header, Style::default().fg(DIM))),
@@ -56,11 +56,14 @@ pub(super) fn draw_hub(frame: &mut Frame, app: &App) {
 
 /// Search bar, or breadcrumb when inside a repo's file list.
 fn draw_search_bar(frame: &mut Frame, area: Rect, app: &App) {
-    if let Some((repo, _)) = &app.hub.files {
+    if let Some(view) = &app.hub.files {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(" repo: ", Style::default().fg(DIM)),
-                Span::styled(repo.clone(), Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    view.repo.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
             ])),
             area,
         );
@@ -85,10 +88,19 @@ fn draw_search_bar(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_backend_line(frame: &mut Frame, area: Rect, app: &App) {
+    let mlx = if hub::metal_available() {
+        if crate::transcribe::mlx_audio_available() {
+            " + MLX (mlx-audio ✓)"
+        } else {
+            " + MLX (auto-installs on first use)"
+        }
+    } else {
+        ""
+    };
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             format!(
-                " engine: whisper.cpp · {}  ·  downloads to {}",
+                " engines: whisper.cpp · {}{mlx}  ·  downloads to {}",
                 hub::backend_label(),
                 app.library.dir.display()
             ),
@@ -96,6 +108,30 @@ fn draw_backend_line(frame: &mut Frame, area: Rect, app: &App) {
         ))),
         area,
     );
+}
+
+/// The in-flight (or paused) download for `file`, if that model's row is the
+/// one being transferred. The download tracks the on-disk base name, so
+/// compare against each row's base name.
+fn active_download<'a>(app: &'a App, file: &str) -> Option<&'a Download> {
+    let d = app.hub.download.as_ref()?;
+    let base = hub::dest_name(file)?;
+    (d.file == base).then_some(d)
+}
+
+/// The row for a transferring model: a bullet (or pause bar) and yellow text.
+fn downloading_row<'a>(name: &str, width: usize, size: &str, d: &Download) -> ListItem<'a> {
+    let yellow = Style::default().fg(Color::Yellow);
+    let (mark, tag) = if d.paused {
+        ("‖ ", "paused")
+    } else {
+        ("• ", "downloading…")
+    };
+    ListItem::new(Line::from(vec![
+        Span::styled(mark, yellow),
+        Span::styled(format!("{name:<width$}"), yellow),
+        Span::styled(format!("{size:>9}  {tag}"), yellow),
+    ]))
 }
 
 /// Header text + rows for whichever list is showing.
@@ -106,22 +142,51 @@ fn list_content<'a>(app: &'a App, visible: &HubList<'a>) -> (String, Vec<ListIte
         "CPU"
     };
     match visible {
-        HubList::Files(files) => (
-            " GGML/GGUF files — Enter downloads".into(),
-            files
+        HubList::Files(view) => (
+            " models — ✓ already downloaded · Enter downloads (folders download whole)".into(),
+            view.variants
                 .iter()
-                .map(|f| {
+                .map(|v| {
+                    // A directory-model variant downloads as its own folder
+                    let name = hub::variant_dir_name(&view.repo, &v.subdir);
+                    let size = if v.size_bytes > 0 {
+                        human_size(v.size_bytes)
+                    } else {
+                        "?".into()
+                    };
+                    if let Some(d) = app.hub.download.as_ref().filter(|d| d.file == name) {
+                        return downloading_row(&v.label(&view.repo), 44, &size, d);
+                    }
+                    let installed = app.library.models.iter().any(|m| m.name == name);
+                    let marker = if installed { "✓ " } else { "  " };
+                    ListItem::new(Line::from(vec![
+                        Span::styled(marker, Style::default().fg(Color::Green)),
+                        Span::raw(format!("{:<44}", v.label(&view.repo))),
+                        Span::styled(
+                            format!("{size:>9}  {} files  ", v.file_count),
+                            Style::default().fg(DIM),
+                        ),
+                        Span::styled("MLX", Style::default().fg(Color::Green)),
+                    ]))
+                })
+                .chain(view.files.iter().map(|f| {
                     let size = if f.size_bytes > 0 {
                         human_size(f.size_bytes)
                     } else {
                         "?".into()
                     };
+                    if let Some(d) = active_download(app, &f.name) {
+                        return downloading_row(&f.name, 44, &size, d);
+                    }
+                    let installed = app.library.models.iter().any(|m| m.name == f.name);
+                    let marker = if installed { "✓ " } else { "  " };
                     ListItem::new(Line::from(vec![
-                        Span::raw(format!(" {:<44}", f.name)),
+                        Span::styled(marker, Style::default().fg(Color::Green)),
+                        Span::raw(format!("{:<44}", f.name)),
                         Span::styled(format!("{size:>9}  "), Style::default().fg(DIM)),
                         Span::styled(metal_tag, Style::default().fg(Color::Green)),
                     ]))
-                })
+                }))
                 .collect(),
         ),
         HubList::Results(results) => (
@@ -142,30 +207,56 @@ fn list_content<'a>(app: &'a App, visible: &HubList<'a>) -> (String, Vec<ListIte
                 })
                 .collect(),
         ),
-        HubList::Suggested(suggested) => (
-            " suggested models — Enter downloads · type to search speech-to-text on Hugging Face"
+        HubList::Default(entries) => (
+            " ✓ selected default · downloaded in white · Enter selects/downloads · Del removes"
                 .into(),
-            suggested
+            entries
                 .iter()
-                .map(|s| {
-                    let installed = app.library.models.iter().any(|m| m.name == s.file);
-                    let marker = if installed { "● " } else { "  " };
-                    if s.supported() {
-                        ListItem::new(Line::from(vec![
-                            Span::styled(marker, Style::default().fg(ACCENT)),
-                            Span::raw(format!("{:<26}", s.name)),
-                            Span::styled(format!("{:>7}  ", s.size), Style::default().fg(DIM)),
-                            Span::styled(metal_tag, Style::default().fg(Color::Green)),
-                            Span::styled(format!("  {}", s.note), Style::default().fg(DIM)),
-                        ]))
+                .map(|e| {
+                    // Directory models run on the MLX engine, not Metal/whisper
+                    let engine_tag = if e.is_dir { "MLX" } else { metal_tag };
+                    if let Some(d) = active_download(app, &e.file) {
+                        return downloading_row(e.name, 26, &e.size, d);
+                    }
+                    if e.installed {
+                        // On disk: white text. The checkmark marks only the
+                        // model chosen as the current default.
+                        let selected = app
+                            .library
+                            .selected
+                            .as_ref()
+                            .is_some_and(|m| m.name == e.file);
+                        let white = Style::default().fg(Color::White);
+                        let marker = if selected {
+                            Span::styled("✓ ", Style::default().fg(Color::Green))
+                        } else {
+                            Span::styled("  ", white)
+                        };
+                        let mut spans = vec![
+                            marker,
+                            Span::styled(format!("{:<26}", e.name), white),
+                            Span::styled(format!("{:>9}  ", e.size), white),
+                            Span::styled(engine_tag, Style::default().fg(Color::Green)),
+                        ];
+                        if !e.note.is_empty() {
+                            spans.push(Span::styled(
+                                format!("  {}", e.note),
+                                Style::default().fg(DIM),
+                            ));
+                        }
+                        ListItem::new(Line::from(spans))
                     } else {
+                        // Not downloaded yet: greyed out. Runnable suggestions
+                        // keep their size; MLX-only ones spell out the format.
+                        let tail = if e.supported {
+                            format!("{:>9}  {}", e.size, e.note)
+                        } else {
+                            format!("{:>9}  {}  {}", e.size, e.format.to_uppercase(), e.note)
+                        };
                         ListItem::new(Line::from(vec![
                             Span::raw("  "),
-                            Span::styled(format!("{:<26}", s.name), Style::default().fg(DIM)),
-                            Span::styled(
-                                format!("{:>7}  {}  {}", s.size, s.format.to_uppercase(), s.note),
-                                Style::default().fg(DIM),
-                            ),
+                            Span::styled(format!("{:<26}", e.name), Style::default().fg(DIM)),
+                            Span::styled(tail, Style::default().fg(DIM)),
                         ]))
                     }
                 })
@@ -174,25 +265,33 @@ fn list_content<'a>(app: &'a App, visible: &HubList<'a>) -> (String, Vec<ListIte
     }
 }
 
-/// Bottom line: download progress wins over the info message.
+/// Bottom line: download progress (or a paused bar) wins over the info message.
 fn draw_bottom_line(frame: &mut Frame, area: Rect, app: &App) {
-    if let Some((file, got, total)) = &app.hub.download {
-        let (ratio, label) = if *total > 0 {
+    if let Some(d) = &app.hub.download {
+        let ratio = if d.total > 0 {
+            (d.got as f64 / d.total as f64).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let sizes = if d.total > 0 {
+            format!("{} / {}", human_size(d.got), human_size(d.total))
+        } else {
+            format!("{}…", human_size(d.got))
+        };
+        let (color, label) = if d.paused {
             (
-                (*got as f64 / *total as f64).clamp(0.0, 1.0),
-                format!(
-                    "{file}  {} / {}  {:.0}%",
-                    human_size(*got),
-                    human_size(*total),
-                    *got as f64 / *total as f64 * 100.0
-                ),
+                Color::Yellow,
+                format!("{}  paused at {sizes}  ·  p resumes · Esc cancels", d.file),
             )
         } else {
-            (0.0, format!("{file}  {}…", human_size(*got)))
+            (
+                ACCENT,
+                format!("{}  {sizes}  ·  p pauses · Esc cancels", d.file),
+            )
         };
         frame.render_widget(
             Gauge::default()
-                .gauge_style(Style::default().fg(ACCENT).bg(Color::Black))
+                .gauge_style(Style::default().fg(color).bg(Color::Black))
                 .ratio(ratio)
                 .label(label),
             area,
@@ -208,4 +307,66 @@ fn draw_bottom_line(frame: &mut Frame, area: Rect, app: &App) {
             area,
         );
     }
+}
+
+/// The delete-model confirmation, drawn on top of the hub modal.
+pub(super) fn draw_hub_delete_prompt(frame: &mut Frame, app: &App) {
+    let Some(prompt) = &app.hub.delete_prompt else {
+        return;
+    };
+    let area = centered_rect(64, 36, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red))
+        .title(" delete model? ");
+
+    let option = |label: &str, selected: bool| {
+        if selected {
+            Span::styled(format!("[ {label} ]"), highlight_style())
+        } else {
+            Span::styled(format!("[ {label} ]"), Style::default().fg(DIM))
+        }
+    };
+
+    let what = if prompt.path.is_dir() {
+        "  Permanently delete this model folder (all its files) from disk?"
+    } else {
+        "  Permanently delete this model file from disk?"
+    };
+    let lines = vec![
+        Line::raw(""),
+        Line::raw(what),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("  model: ", Style::default().fg(DIM)),
+            Span::styled(
+                prompt.name.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  size:  ", Style::default().fg(DIM)),
+            Span::raw(human_size(prompt.size)),
+        ]),
+        Line::from(vec![
+            Span::styled("  path:  ", Style::default().fg(DIM)),
+            Span::raw(prompt.path.display().to_string()),
+        ]),
+        Line::raw(""),
+        Line::from(vec![
+            Span::raw("  "),
+            option("Yes, delete", prompt.yes_selected),
+            Span::raw("   "),
+            option("No, keep it", !prompt.yes_selected),
+        ]),
+        Line::raw(""),
+        Line::from(Span::styled(
+            "  ←→ choose · Enter confirm · y / n shortcuts · Esc cancels",
+            Style::default().fg(DIM),
+        )),
+    ];
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }

@@ -75,7 +75,7 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
         )),
         Line::raw(""),
         Line::from(Span::styled(
-            "  Model management  →  search & download from Hugging Face",
+            "  Model management  →  installed models · download · delete",
             row_style(SettingsRow::ModelManagement),
         )),
         Line::raw(""),
