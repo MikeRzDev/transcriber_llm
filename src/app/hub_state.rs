@@ -179,7 +179,7 @@ impl App {
             self.hub.info = "Bad file name".into();
             return;
         };
-        if self.models.iter().any(|m| m.name == base) {
+        if self.library.models.iter().any(|m| m.name == base) {
             self.hub.info = format!("{base} is already in the models folder");
             return;
         }
@@ -189,7 +189,7 @@ impl App {
         hub::download(
             repo,
             file,
-            self.models_dir.clone(),
+            self.library.dir.clone(),
             self.hub.cancel.clone(),
             self.hub_tx.clone(),
         );
@@ -237,9 +237,9 @@ impl App {
                 self.hub.download = None;
                 self.refresh_models();
                 self.hub.info = format!("Downloaded {file} ✓");
-                self.status = format!("Downloaded {file} to {}", self.models_dir.display());
-                if self.selected_model.is_none() {
-                    self.selected_model = self.models.iter().find(|m| m.path == path).cloned();
+                self.status = format!("Downloaded {file} to {}", self.library.dir.display());
+                if self.library.selected.is_none() {
+                    self.library.selected = self.library.models.iter().find(|m| m.path == path).cloned();
                 }
             }
             HubEvent::Cancelled { file } => {
@@ -259,7 +259,7 @@ impl App {
                 self.adopt_selection();
                 let mut parts = vec![format!(
                     "Moved {moved} model(s) to {}",
-                    self.models_dir.display()
+                    self.library.dir.display()
                 )];
                 if skipped > 0 {
                     parts.push(format!("{skipped} already existed"));

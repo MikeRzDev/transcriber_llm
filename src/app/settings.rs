@@ -1,5 +1,5 @@
-//! The settings modal's supporting state: folder choices (directory
-//! picker), the move-models prompt, and the toggles persisted to config.
+//! The settings modal: its rows, folder choices (directory picker), the
+//! move-models prompt, and the toggles persisted to config.
 
 use std::path::{Path, PathBuf};
 
@@ -9,6 +9,65 @@ use crate::app::App;
 use crate::config;
 use crate::hub::HubEvent;
 use crate::models;
+
+/// The rows of the settings menu, in display order.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SettingsRow {
+    DefaultModel,
+    ModelsFolder,
+    OutputFolder,
+    ModelManagement,
+    Diarize,
+    SplitMode,
+    Language,
+}
+
+impl SettingsRow {
+    pub const ALL: [Self; 7] = [
+        Self::DefaultModel,
+        Self::ModelsFolder,
+        Self::OutputFolder,
+        Self::ModelManagement,
+        Self::Diarize,
+        Self::SplitMode,
+        Self::Language,
+    ];
+
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|r| *r == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+
+    pub fn prev(self) -> Self {
+        let i = Self::ALL.iter().position(|r| *r == self).unwrap_or(0);
+        Self::ALL[(i + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+}
+
+/// State of the settings modal and the flows it can open on top of
+/// itself (folder picker, move prompt, inline language entry).
+pub struct SettingsUi {
+    pub open: bool,
+    pub selected: SettingsRow,
+    /// Some(text) while the language code is being edited
+    pub language_input: Option<String>,
+    /// Some while a folder is being chosen via the directory browser
+    pub dir_picker: Option<DirPicker>,
+    /// Some while asking whether to move models into the new folder
+    pub move_prompt: Option<MovePrompt>,
+}
+
+impl SettingsUi {
+    pub(crate) fn new() -> Self {
+        Self {
+            open: false,
+            selected: SettingsRow::DefaultModel,
+            language_input: None,
+            dir_picker: None,
+            move_prompt: None,
+        }
+    }
+}
 
 /// Which folder setting a DirPicker session is choosing for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -107,42 +166,45 @@ pub struct MovePrompt {
 
 impl App {
     pub(crate) fn settings_key(&mut self, code: KeyCode) {
-        if let Some(input) = &mut self.language_input {
+        if let Some(input) = &mut self.settings.language_input {
             match code {
                 KeyCode::Char(c) => input.push(c),
                 KeyCode::Backspace => {
                     input.pop();
                 }
                 KeyCode::Enter => {
-                    let text = self.language_input.take().unwrap_or_default();
+                    let text = self.settings.language_input.take().unwrap_or_default();
                     self.set_language(&text);
                 }
-                KeyCode::Esc => self.language_input = None,
+                KeyCode::Esc => self.settings.language_input = None,
                 _ => {}
             }
             return;
         }
         match code {
             KeyCode::Esc | KeyCode::Char('s') | KeyCode::Char('q') => {
-                self.settings_open = false;
+                self.settings.open = false;
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.settings_selected = self.settings_selected.checked_sub(1).unwrap_or(6);
+                self.settings.selected = self.settings.selected.prev();
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.settings_selected = (self.settings_selected + 1) % 7;
+                self.settings.selected = self.settings.selected.next();
             }
-            KeyCode::Enter => match self.settings_selected {
-                0 => self.open_model_picker(),
-                1 => self.open_dir_picker(DirTarget::Models),
-                2 => self.open_dir_picker(DirTarget::Output),
-                3 => {
-                    self.settings_open = false;
+            KeyCode::Enter => match self.settings.selected {
+                SettingsRow::DefaultModel => self.open_model_picker(),
+                SettingsRow::ModelsFolder => self.open_dir_picker(DirTarget::Models),
+                SettingsRow::OutputFolder => self.open_dir_picker(DirTarget::Output),
+                SettingsRow::ModelManagement => {
+                    self.settings.open = false;
                     self.open_hub();
                 }
-                4 => self.toggle_diarize(),
-                5 => self.cycle_split_mode(),
-                _ => self.language_input = Some(self.config.language.clone().unwrap_or_default()),
+                SettingsRow::Diarize => self.toggle_diarize(),
+                SettingsRow::SplitMode => self.cycle_split_mode(),
+                SettingsRow::Language => {
+                    self.settings.language_input =
+                        Some(self.config.language.clone().unwrap_or_default())
+                }
             },
             _ => {}
         }
@@ -150,10 +212,9 @@ impl App {
 
     /// Toggle diarization and persist the choice.
     pub fn toggle_diarize(&mut self) {
-        self.diarize = !self.diarize;
-        self.config.diarize = self.diarize;
+        self.config.diarize = !self.config.diarize;
         let _ = config::save(&self.config);
-        self.status = if self.diarize {
+        self.status = if self.config.diarize {
             match self.find_tdrz_model() {
                 Some(m) => format!("Diarization ON — conversations will use {}", m.name),
                 None => "Diarization ON, but no tdrz model found — get ggml-small.en-tdrz.bin from huggingface.co/akashmjn/tinydiarize-whisper.cpp into the models folder".into(),
@@ -194,10 +255,10 @@ impl App {
             self.status = format!("Cannot use folder {}: {e}", path.display());
             return;
         }
-        let old_dir = self.models_dir.clone();
-        let old_count = self.models.len();
+        let old_dir = self.library.dir.clone();
+        let old_count = self.library.models.len();
         let path = path.canonicalize().unwrap_or(path);
-        self.models_dir = path.clone();
+        self.library.dir = path.clone();
         self.config.models_dir = Some(path);
         // Scan the new folder: every supported model inside joins the list
         self.refresh_models();
@@ -207,14 +268,14 @@ impl App {
         } else {
             self.status = format!(
                 "Models folder set to {} — {} model(s) found",
-                self.models_dir.display(),
-                self.models.len()
+                self.library.dir.display(),
+                self.library.models.len()
             );
         }
-        if old_dir != self.models_dir && old_count > 0 {
-            self.move_prompt = Some(MovePrompt {
+        if old_dir != self.library.dir && old_count > 0 {
+            self.settings.move_prompt = Some(MovePrompt {
                 from: old_dir,
-                to: self.models_dir.clone(),
+                to: self.library.dir.clone(),
                 count: old_count,
                 yes_selected: true,
             });
@@ -239,18 +300,18 @@ impl App {
 
     pub fn open_dir_picker(&mut self, target: DirTarget) {
         let start = match target {
-            DirTarget::Models => self.models_dir.clone(),
+            DirTarget::Models => self.library.dir.clone(),
             DirTarget::Output => self.output_dir.clone(),
         };
-        self.dir_picker = Some(DirPicker::at(target, &start));
+        self.settings.dir_picker = Some(DirPicker::at(target, &start));
     }
 
     pub fn dir_picker_key(&mut self, code: KeyCode) {
-        let Some(picker) = &mut self.dir_picker else {
+        let Some(picker) = &mut self.settings.dir_picker else {
             return;
         };
         match code {
-            KeyCode::Esc => self.dir_picker = None,
+            KeyCode::Esc => self.settings.dir_picker = None,
             KeyCode::Up | KeyCode::Char('k') => picker.selected = picker.selected.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => {
                 let len = picker.rows().len();
@@ -261,7 +322,7 @@ impl App {
             KeyCode::Enter => match picker.rows().get(picker.selected).cloned() {
                 Some(DirRow::UseThis) => {
                     let (target, dir) = (picker.target, picker.cwd.clone());
-                    self.dir_picker = None;
+                    self.settings.dir_picker = None;
                     match target {
                         DirTarget::Models => self.set_models_dir_path(dir),
                         DirTarget::Output => self.set_output_dir_path(dir),
@@ -284,12 +345,12 @@ impl App {
     }
 
     pub fn move_prompt_key(&mut self, code: KeyCode) {
-        let Some(prompt) = &mut self.move_prompt else {
+        let Some(prompt) = &mut self.settings.move_prompt else {
             return;
         };
         match code {
             KeyCode::Esc | KeyCode::Char('n') => {
-                self.move_prompt = None;
+                self.settings.move_prompt = None;
                 self.status = "Models left in the previous folder".into();
             }
             KeyCode::Left
@@ -298,11 +359,11 @@ impl App {
             | KeyCode::Char('h')
             | KeyCode::Char('l') => prompt.yes_selected = !prompt.yes_selected,
             KeyCode::Char('y') => {
-                let prompt = self.move_prompt.take().unwrap();
+                let prompt = self.settings.move_prompt.take().unwrap();
                 self.start_move_models(prompt.from, prompt.to, prompt.count);
             }
             KeyCode::Enter => {
-                let prompt = self.move_prompt.take().unwrap();
+                let prompt = self.settings.move_prompt.take().unwrap();
                 if prompt.yes_selected {
                     self.start_move_models(prompt.from, prompt.to, prompt.count);
                 } else {

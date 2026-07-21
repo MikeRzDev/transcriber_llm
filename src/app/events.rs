@@ -32,7 +32,7 @@ impl App {
                 self.status = "Decoding audio…".into();
             }
             Event::AudioInfo { duration_secs } => {
-                self.audio_duration = Some(duration_secs);
+                self.transcript.duration_secs = Some(duration_secs);
                 self.work = WorkState::Transcribing { progress: 0 };
                 self.status = format!("Transcribing {duration_secs:.0}s of audio…");
             }
@@ -42,10 +42,10 @@ impl App {
                 }
             }
             Event::Segment(seg) => {
-                self.segments.push(seg);
+                self.transcript.segments.push(seg);
             }
             Event::SegmentsFinal(segments) => {
-                self.segments = segments;
+                self.transcript.segments = segments;
             }
             Event::Done {
                 elapsed_secs,
@@ -55,8 +55,8 @@ impl App {
                 self.work = WorkState::Idle;
                 let rtf = elapsed_secs / audio_secs.max(0.001);
                 let lang = language.as_deref().unwrap_or("?").to_string();
-                self.language = language;
-                let spoken = if self.segments.iter().any(|s| s.speaker.is_some()) {
+                self.transcript.language = language;
+                let spoken = if self.transcript.segments.iter().any(|s| s.speaker.is_some()) {
                     " · 2 speakers labeled"
                 } else {
                     ""
@@ -64,7 +64,7 @@ impl App {
                 let base =
                     format!("Done in {elapsed_secs:.1}s ({rtf:.2}× realtime, lang: {lang}{spoken})");
                 // Exports run automatically after every successful transcription
-                self.status = if self.segments.is_empty() {
+                self.status = if self.transcript.segments.is_empty() {
                     format!("{base} — no speech found, nothing to export")
                 } else {
                     match self.export() {

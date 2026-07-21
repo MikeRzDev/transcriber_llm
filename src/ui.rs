@@ -4,14 +4,23 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::app::{App, DirRow, FileEntry, Focus, WorkState};
+use crate::app::{App, DirRow, FileEntry, Focus, SettingsRow, TranscriptState, WorkState};
 use crate::format::{clock_time, fmt_count, human_size};
 use crate::hub;
 
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
 
-pub fn draw(frame: &mut Frame, app: &mut App) {
+/// The five fixed regions of the base screen.
+struct Areas {
+    header: Rect,
+    files: Rect,
+    transcript: Rect,
+    status: Rect,
+    keys: Rect,
+}
+
+fn areas(area: Rect) -> Areas {
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -20,39 +29,63 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Constraint::Length(1), // status
             Constraint::Length(1), // keys
         ])
-        .split(frame.area());
-
-    draw_header(frame, outer[0], app);
-
+        .split(area);
     let body = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(34), Constraint::Min(20)])
         .split(outer[1]);
+    Areas {
+        header: outer[0],
+        files: body[0],
+        transcript: body[1],
+        status: outer[2],
+        keys: outer[3],
+    }
+}
 
-    draw_files(frame, body[0], app);
-    draw_transcript(frame, body[1], app);
-    draw_status(frame, outer[2], app);
-    draw_keys(frame, outer[3], app);
+/// Pin the transcript scroll to its content for this frame. Runs in the
+/// update phase (before `draw`) so rendering itself never mutates state.
+pub fn clamp_transcript(app: &mut App, area: Rect) {
+    if app.transcript.segments.is_empty() {
+        return;
+    }
+    let transcript_area = areas(area).transcript;
+    // Block borders take one cell on each side
+    let inner_width = transcript_area.width.saturating_sub(2) as usize;
+    let viewport = transcript_area.height.saturating_sub(2) as usize;
+    let text_width = inner_width.saturating_sub(2).max(20);
+    let total = transcript_lines(&app.transcript, text_width).len();
+    app.transcript.clamp(total, viewport);
+}
 
-    if app.settings_open {
+pub fn draw(frame: &mut Frame, app: &App) {
+    let areas = areas(frame.area());
+
+    draw_header(frame, areas.header, app);
+    draw_files(frame, areas.files, app);
+    draw_transcript(frame, areas.transcript, app);
+    draw_status(frame, areas.status, app);
+    draw_keys(frame, areas.keys, app);
+
+    if app.settings.open {
         draw_settings(frame, app);
     }
-    if app.model_picker_open {
+    if app.picker.open {
         draw_model_picker(frame, app);
     }
     if app.hub.open {
         draw_hub(frame, app);
     }
-    if app.dir_picker.is_some() {
+    if app.settings.dir_picker.is_some() {
         draw_dir_picker(frame, app);
     }
-    if app.move_prompt.is_some() {
+    if app.settings.move_prompt.is_some() {
         draw_move_prompt(frame, app);
     }
 }
 
 fn draw_move_prompt(frame: &mut Frame, app: &App) {
-    let Some(prompt) = &app.move_prompt else {
+    let Some(prompt) = &app.settings.move_prompt else {
         return;
     };
     let area = centered_rect(64, 30, frame.area());
@@ -111,7 +144,7 @@ fn draw_move_prompt(frame: &mut Frame, app: &App) {
 }
 
 fn draw_dir_picker(frame: &mut Frame, app: &App) {
-    let Some(picker) = &app.dir_picker else {
+    let Some(picker) = &app.settings.dir_picker else {
         return;
     };
     let area = centered_rect(70, 60, frame.area());
@@ -244,7 +277,7 @@ fn draw_hub(frame: &mut Frame, app: &App) {
             format!(
                 " engine: whisper.cpp · {}  ·  downloads to {}",
                 hub::backend_label(),
-                app.models_dir.display()
+                app.library.dir.display()
             ),
             Style::default().fg(DIM),
         ))),
@@ -304,7 +337,7 @@ fn draw_hub(frame: &mut Frame, app: &App) {
                 .suggested
                 .iter()
                 .map(|s| {
-                    let installed = app.models.iter().any(|m| m.name == s.file);
+                    let installed = app.library.models.iter().any(|m| m.name == s.file);
                     let marker = if installed { "● " } else { "  " };
                     if s.supported() {
                         ListItem::new(Line::from(vec![
@@ -400,14 +433,14 @@ fn draw_settings(frame: &mut Frame, app: &App) {
         .border_style(Style::default().fg(ACCENT))
         .title(" settings ");
 
-    let model = app
-        .selected_model
+    let model = app.library
+        .selected
         .as_ref()
         .map(|m| format!("{} ({})", m.name, m.size_human()))
         .unwrap_or_else(|| "none".into());
 
-    let row_style = |row: usize| {
-        if app.settings_selected == row && app.language_input.is_none() {
+    let row_style = |row: SettingsRow| {
+        if app.settings.selected == row && app.settings.language_input.is_none() {
             Style::default()
                 .bg(ACCENT)
                 .fg(Color::Black)
@@ -417,13 +450,13 @@ fn draw_settings(frame: &mut Frame, app: &App) {
         }
     };
 
-    let diarize_state = if app.diarize {
+    let diarize_state = if app.config.diarize {
         "ON  (uses the tdrz model, English only)"
     } else {
         "OFF"
     };
 
-    let language_line: Line = if let Some(input) = &app.language_input {
+    let language_line: Line = if let Some(input) = &app.settings.language_input {
         Line::from(vec![
             Span::raw("  Language:       "),
             Span::styled(
@@ -439,7 +472,7 @@ fn draw_settings(frame: &mut Frame, app: &App) {
                 "  Language:       {}",
                 app.config.language.as_deref().unwrap_or("auto-detect")
             ),
-            row_style(6),
+            row_style(SettingsRow::Language),
         ))
     };
 
@@ -447,38 +480,38 @@ fn draw_settings(frame: &mut Frame, app: &App) {
         Line::raw(""),
         Line::from(Span::styled(
             format!("  Default model:  {model}"),
-            row_style(0),
+            row_style(SettingsRow::DefaultModel),
         )),
         Line::raw(""),
         Line::from(Span::styled(
-            format!("  Models folder:  {}", app.models_dir.display()),
-            row_style(1),
+            format!("  Models folder:  {}", app.library.dir.display()),
+            row_style(SettingsRow::ModelsFolder),
         )),
         Line::raw(""),
         Line::from(Span::styled(
             format!("  Output folder:  {}", app.output_dir.display()),
-            row_style(2),
+            row_style(SettingsRow::OutputFolder),
         )),
         Line::raw(""),
         Line::from(Span::styled(
             "  Model management  →  search & download from Hugging Face",
-            row_style(3),
+            row_style(SettingsRow::ModelManagement),
         )),
         Line::raw(""),
         Line::from(Span::styled(
             format!("  Diarization:    {diarize_state}"),
-            row_style(4),
+            row_style(SettingsRow::Diarize),
         )),
         Line::raw(""),
         Line::from(Span::styled(
             format!("  Split mode:     {}", app.config.split_mode.label()),
-            row_style(5),
+            row_style(SettingsRow::SplitMode),
         )),
         Line::raw(""),
         language_line,
         Line::raw(""),
         Line::from(Span::styled(
-            if app.language_input.is_some() {
+            if app.settings.language_input.is_some() {
                 "  Type an ISO 639-1 code (en, es, de, fr…) or auto, Enter to save"
             } else {
                 "  ↑↓ select · Enter change · Esc close  (saved to ~/.config/transcribe-stt)"
@@ -491,8 +524,8 @@ fn draw_settings(frame: &mut Frame, app: &App) {
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
-    let model = app
-        .selected_model
+    let model = app.library
+        .selected
         .as_ref()
         .map(|m| format!("{} ({})", m.name, m.size_human()))
         .unwrap_or_else(|| "no model — press m".into());
@@ -504,7 +537,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         Span::raw("  "),
         Span::styled(model, Style::default().fg(ACCENT)),
         Span::styled("  •  Metal GPU", Style::default().fg(DIM)),
-        if app.diarize {
+        if app.config.diarize {
             Span::styled("  •  diarize", Style::default().fg(Color::Magenta))
         } else {
             Span::raw("")
@@ -528,7 +561,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-fn draw_files(frame: &mut Frame, area: Rect, app: &mut App) {
+fn draw_files(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.focus == Focus::Files;
     let border_style = if focused {
         Style::default().fg(ACCENT)
@@ -536,7 +569,7 @@ fn draw_files(frame: &mut Frame, area: Rect, app: &mut App) {
         Style::default().fg(DIM)
     };
 
-    let items: Vec<ListItem> = app
+    let items: Vec<ListItem> = app.browser
         .entries
         .iter()
         .map(|e| {
@@ -551,7 +584,7 @@ fn draw_files(frame: &mut Frame, area: Rect, app: &mut App) {
     let title = format!(
         " {} ",
         truncate_left(
-            &app.cwd.display().to_string(),
+            &app.browser.cwd.display().to_string(),
             (area.width as usize).saturating_sub(4).max(4)
         )
     );
@@ -570,55 +603,17 @@ fn draw_files(frame: &mut Frame, area: Rect, app: &mut App) {
         );
 
     let mut state = ListState::default();
-    if !app.entries.is_empty() {
-        state.select(Some(app.file_selected));
+    if !app.browser.entries.is_empty() {
+        state.select(Some(app.browser.selected));
     }
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
-    let focused = app.focus == Focus::Transcript;
-    let border_style = if focused {
-        Style::default().fg(ACCENT)
-    } else {
-        Style::default().fg(DIM)
-    };
-
-    let title = app
-        .current_audio
-        .as_ref()
-        .and_then(|p| p.file_name())
-        .map(|n| format!(" {} ", n.to_string_lossy()))
-        .unwrap_or_else(|| " transcript ".into());
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .title(title);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    if app.segments.is_empty() {
-        let placeholder = match app.work {
-            WorkState::Idle => {
-                "No transcript yet.\n\nPick an audio file on the left and press Enter."
-            }
-            _ => "Waiting for first segment…",
-        };
-        frame.render_widget(
-            Paragraph::new(placeholder)
-                .style(Style::default().fg(DIM))
-                .alignment(Alignment::Center)
-                .wrap(Wrap { trim: true }),
-            inner,
-        );
-        return;
-    }
-
-    // Build wrapped lines: "[mm:ss → mm:ss] text"
-    let text_width = (inner.width as usize).saturating_sub(2).max(20);
+/// Wrapped display lines: "[mm:ss → mm:ss] text", speaker-tagged when
+/// diarized. Shared by rendering and the pre-draw scroll clamp.
+fn transcript_lines(transcript: &TranscriptState, text_width: usize) -> Vec<Line<'static>> {
     let mut lines: Vec<Line> = Vec::new();
-    for seg in &app.segments {
+    for seg in &transcript.segments {
         let stamp = format!(
             "[{} → {}] ",
             clock_time(seg.start_ms),
@@ -655,18 +650,53 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
             }
         }
     }
+    lines
+}
 
-    let total = lines.len();
-    let viewport = inner.height as usize;
-    let max_scroll = total.saturating_sub(viewport);
-    if app.follow {
-        app.transcript_scroll = max_scroll;
+fn draw_transcript(frame: &mut Frame, area: Rect, app: &App) {
+    let focused = app.focus == Focus::Transcript;
+    let border_style = if focused {
+        Style::default().fg(ACCENT)
     } else {
-        app.transcript_scroll = app.transcript_scroll.min(max_scroll);
+        Style::default().fg(DIM)
+    };
+
+    let title = app
+        .transcript
+        .source
+        .as_ref()
+        .and_then(|p| p.file_name())
+        .map(|n| format!(" {} ", n.to_string_lossy()))
+        .unwrap_or_else(|| " transcript ".into());
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(title);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if app.transcript.segments.is_empty() {
+        let placeholder = match app.work {
+            WorkState::Idle => {
+                "No transcript yet.\n\nPick an audio file on the left and press Enter."
+            }
+            _ => "Waiting for first segment…",
+        };
+        frame.render_widget(
+            Paragraph::new(placeholder)
+                .style(Style::default().fg(DIM))
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: true }),
+            inner,
+        );
+        return;
     }
 
+    let text_width = (inner.width as usize).saturating_sub(2).max(20);
+    let lines = transcript_lines(&app.transcript, text_width);
     frame.render_widget(
-        Paragraph::new(lines).scroll((app.transcript_scroll as u16, 0)),
+        Paragraph::new(lines).scroll((app.transcript.scroll as u16, 0)),
         inner,
     );
 }
@@ -715,26 +745,26 @@ fn draw_keys(frame: &mut Frame, area: Rect, app: &App) {
             ("Enter", "open / download"),
             ("Esc", "back / cancel / close"),
         ]
-    } else if app.move_prompt.is_some() {
+    } else if app.settings.move_prompt.is_some() {
         &[
             ("←→", "choose"),
             ("Enter", "confirm"),
             ("y/n", "shortcuts"),
             ("Esc", "leave them"),
         ]
-    } else if app.dir_picker.is_some() {
+    } else if app.settings.dir_picker.is_some() {
         &[
             ("↑↓", "select"),
             ("Enter", "open / choose folder"),
             ("Esc", "cancel"),
         ]
-    } else if app.model_picker_open {
+    } else if app.picker.open {
         &[
             ("↑↓", "select"),
             ("Enter", "set default model"),
             ("Esc", "close"),
         ]
-    } else if app.settings_open {
+    } else if app.settings.open {
         &[("↑↓", "select"), ("Enter", "change"), ("Esc", "close")]
     } else {
         &[
@@ -760,16 +790,16 @@ fn draw_keys(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn draw_model_picker(frame: &mut Frame, app: &mut App) {
+fn draw_model_picker(frame: &mut Frame, app: &App) {
     let area = centered_rect(60, 40, frame.area());
     frame.render_widget(Clear, area);
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ACCENT))
-        .title(format!(" models in {} ", app.models_dir.display()));
+        .title(format!(" models in {} ", app.library.dir.display()));
 
-    if app.models.is_empty() {
+    if app.library.models.is_empty() {
         frame.render_widget(
             Paragraph::new("No .bin or .gguf models found.\n\nDownload one in Settings → Model management (s).")
                 .block(block)
@@ -780,12 +810,12 @@ fn draw_model_picker(frame: &mut Frame, app: &mut App) {
         return;
     }
 
-    let items: Vec<ListItem> = app
+    let items: Vec<ListItem> = app.library
         .models
         .iter()
         .map(|m| {
-            let selected_marker = app
-                .selected_model
+            let selected_marker = app.library
+                .selected
                 .as_ref()
                 .map(|s| s.path == m.path)
                 .unwrap_or(false);
@@ -806,7 +836,7 @@ fn draw_model_picker(frame: &mut Frame, app: &mut App) {
     );
 
     let mut state = ListState::default();
-    state.select(Some(app.model_picker_selected));
+    state.select(Some(app.picker.selected));
     frame.render_stateful_widget(list, area, &mut state);
 }
 

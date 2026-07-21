@@ -39,7 +39,12 @@ pub fn run(args: Args) -> Result<()> {
         loop {
             app.stats.refresh_if_due();
             app.tick = app.tick.wrapping_add(1);
-            terminal.draw(|frame| ui::draw(frame, &mut app))?;
+            let size = terminal.size()?;
+            ui::clamp_transcript(
+                &mut app,
+                ratatui::layout::Rect::new(0, 0, size.width, size.height),
+            );
+            terminal.draw(|frame| ui::draw(frame, &app))?;
 
             while let Ok(event) = rx.try_recv() {
                 app.handle_event(event);
@@ -51,7 +56,7 @@ pub fn run(args: Args) -> Result<()> {
                     TermEvent::Key(key) if key.kind == KeyEventKind::Press => {
                         let mut consumed = false;
                         let typing_in_modal =
-                            app.settings_open || app.model_picker_open || app.hub.open;
+                            app.settings.open || app.picker.open || app.hub.open;
                         if let KeyCode::Char(c) = key.code {
                             if !typing_in_modal
                                 && !key.modifiers.contains(KeyModifiers::CONTROL)

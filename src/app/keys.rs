@@ -3,6 +3,7 @@
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
+use crate::app::settings::SettingsRow;
 use crate::app::{App, Focus, WorkState};
 
 impl App {
@@ -17,19 +18,19 @@ impl App {
             }
             return;
         }
-        if self.move_prompt.is_some() {
+        if self.settings.move_prompt.is_some() {
             self.move_prompt_key(code);
             return;
         }
-        if self.dir_picker.is_some() {
+        if self.settings.dir_picker.is_some() {
             self.dir_picker_key(code);
             return;
         }
-        if self.model_picker_open {
+        if self.picker.open {
             self.model_picker_key(code);
             return;
         }
-        if self.settings_open {
+        if self.settings.open {
             self.settings_key(code);
             return;
         }
@@ -47,8 +48,8 @@ impl App {
             }
             KeyCode::Char('m') => self.open_model_picker(),
             KeyCode::Char('s') => {
-                self.settings_selected = 0;
-                self.settings_open = true;
+                self.settings.selected = SettingsRow::DefaultModel;
+                self.settings.open = true;
             }
             KeyCode::Char('d') => self.toggle_diarize(),
             KeyCode::Char('e') => {
@@ -65,47 +66,30 @@ impl App {
                     self.status = "Cancelling…".into();
                 }
             }
-            KeyCode::Char('r') => self.refresh_entries(),
+            KeyCode::Char('r') => self.browser.refresh(),
             KeyCode::Enter => {
                 if self.focus == Focus::Files {
                     self.enter_selected();
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => match self.focus {
-                Focus::Files => self.file_selected = self.file_selected.saturating_sub(1),
-                Focus::Transcript => {
-                    self.follow = false;
-                    self.transcript_scroll = self.transcript_scroll.saturating_sub(1);
-                }
+                Focus::Files => self.browser.select_prev(),
+                Focus::Transcript => self.transcript.scroll_up(1),
             },
             KeyCode::Down | KeyCode::Char('j') => match self.focus {
-                Focus::Files => {
-                    if !self.entries.is_empty() {
-                        self.file_selected = (self.file_selected + 1).min(self.entries.len() - 1);
-                    }
-                }
-                Focus::Transcript => {
-                    self.follow = false;
-                    self.transcript_scroll += 1;
-                }
+                Focus::Files => self.browser.select_next(),
+                Focus::Transcript => self.transcript.scroll_down(1),
             },
             KeyCode::PageUp => {
                 self.focus = Focus::Transcript;
-                self.follow = false;
-                self.transcript_scroll = self.transcript_scroll.saturating_sub(10);
+                self.transcript.scroll_up(10);
             }
             KeyCode::PageDown => {
                 self.focus = Focus::Transcript;
-                self.follow = false;
-                self.transcript_scroll += 10;
+                self.transcript.scroll_down(10);
             }
-            KeyCode::Char('g') => {
-                self.follow = false;
-                self.transcript_scroll = 0;
-            }
-            KeyCode::Char('G') => {
-                self.follow = true;
-            }
+            KeyCode::Char('g') => self.transcript.scroll_top(),
+            KeyCode::Char('G') => self.transcript.follow_tail(),
             _ => {}
         }
     }

@@ -9,12 +9,15 @@ mod hub_state;
 mod keys;
 mod library;
 mod settings;
+mod transcript;
 
-pub use browser::FileEntry;
+pub use browser::{FileBrowser, FileEntry};
 pub(crate) use browser::file_name;
 pub use drop::DropDetector;
 pub use hub_state::HubState;
-pub use settings::{DirPicker, DirRow, DirTarget, MovePrompt};
+pub use library::{ModelLibrary, ModelPicker};
+pub use settings::{DirPicker, DirRow, DirTarget, MovePrompt, SettingsRow, SettingsUi};
+pub use transcript::TranscriptState;
 
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -26,7 +29,7 @@ use crate::export::TranscriptDoc;
 use crate::hub::HubEvent;
 use crate::models::{self, ModelFile};
 use crate::stats::ProcStats;
-use crate::transcribe::{Job, Segment, Transcriber};
+use crate::transcribe::{Job, Transcriber};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
@@ -47,52 +50,24 @@ pub enum WorkState {
 pub struct App {
     pub should_quit: bool,
     pub focus: Focus,
-
-    // file browser
-    pub cwd: PathBuf,
-    pub entries: Vec<FileEntry>,
-    pub file_selected: usize,
-
-    // models
-    pub models: Vec<ModelFile>,
-    pub selected_model: Option<ModelFile>,
-    pub model_picker_open: bool,
-    pub model_picker_selected: usize,
-    pub models_dir: PathBuf,
-
-    // settings
+    /// Render-loop counter driving the loading spinner
+    pub tick: usize,
+    pub status: String,
+    pub work: WorkState,
+    pub stats: ProcStats,
+    /// Persisted settings — the single source for diarize/language/split
     pub config: Config,
-    pub settings_open: bool,
-    pub settings_selected: usize,
-    /// Some while a folder is being chosen via the directory browser
-    pub dir_picker: Option<DirPicker>,
-    /// Some while asking whether to move models into the new folder
-    pub move_prompt: Option<MovePrompt>,
-    /// Some(text) while the language code is being edited
-    pub language_input: Option<String>,
     /// Where transcript exports are written
     pub output_dir: PathBuf,
 
-    // transcript
-    pub segments: Vec<Segment>,
-    pub transcript_scroll: usize,
-    pub follow: bool,
-    pub current_audio: Option<PathBuf>,
-    pub audio_duration: Option<f32>,
-    pub language: Option<String>,
-    pub used_model_name: Option<String>,
-
-    pub work: WorkState,
-    pub status: String,
-    pub stats: ProcStats,
-    /// Diarization toggle — resolved to a tdrz model when a job starts
-    pub diarize: bool,
-    /// Render-loop counter driving the loading spinner
-    pub tick: usize,
+    pub browser: FileBrowser,
+    pub library: ModelLibrary,
+    pub picker: ModelPicker,
+    pub settings: SettingsUi,
+    pub transcript: TranscriptState,
+    pub hub: HubState,
 
     pub transcriber: Transcriber,
-
-    pub hub: HubState,
     hub_tx: Sender<HubEvent>,
     hub_rx: Receiver<HubEvent>,
 }
@@ -113,47 +88,32 @@ impl App {
                 models::pick_default(&models_list, app_config.default_model.as_deref()).cloned()
             });
 
-        let diarize = app_config.diarize;
         let (hub_tx, hub_rx) = channel();
-        let mut app = Self {
+        Self {
             should_quit: false,
             focus: Focus::Files,
-            cwd: start_dir,
-            entries: Vec::new(),
-            file_selected: 0,
-            models: models_list,
-            selected_model,
-            model_picker_open: false,
-            model_picker_selected: 0,
-            models_dir,
-            config: app_config,
-            settings_open: false,
-            settings_selected: 0,
-            dir_picker: None,
-            move_prompt: None,
-            language_input: None,
-            output_dir,
-            segments: Vec::new(),
-            transcript_scroll: 0,
-            follow: true,
-            current_audio: None,
-            audio_duration: None,
-            language: None,
-            used_model_name: None,
-            work: WorkState::Idle,
+            tick: 0,
             status: String::from(
                 "Select a file and press Enter, or drop an audio/video file onto the window",
             ),
+            work: WorkState::Idle,
             stats: ProcStats::new(),
-            diarize,
-            tick: 0,
-            transcriber,
+            config: app_config,
+            output_dir,
+            browser: FileBrowser::new(start_dir),
+            library: ModelLibrary {
+                dir: models_dir,
+                models: models_list,
+                selected: selected_model,
+            },
+            picker: ModelPicker::default(),
+            settings: SettingsUi::new(),
+            transcript: TranscriptState::new(),
             hub: HubState::new(),
+            transcriber,
             hub_tx,
             hub_rx,
-        };
-        app.refresh_entries();
-        app
+        }
     }
 
     pub fn busy(&self) -> bool {
@@ -167,7 +127,7 @@ impl App {
             return;
         }
         // Diarization is decided before conversion: it needs a tdrz model
-        let model = if self.diarize {
+        let model = if self.config.diarize {
             match self.find_tdrz_model() {
                 Some(m) => m,
                 None => {
@@ -179,7 +139,7 @@ impl App {
                 }
             }
         } else {
-            match self.selected_model.clone() {
+            match self.library.selected.clone() {
                 Some(m) => m,
                 None => {
                     self.status =
@@ -188,13 +148,7 @@ impl App {
                 }
             }
         };
-        self.segments.clear();
-        self.transcript_scroll = 0;
-        self.follow = true;
-        self.audio_duration = None;
-        self.language = None;
-        self.used_model_name = Some(model.name.clone());
-        self.current_audio = Some(audio.clone());
+        self.transcript.begin(audio.clone(), model.name.clone());
         self.work = WorkState::LoadingModel {
             name: model.name.clone(),
             progress: 0,
@@ -203,7 +157,7 @@ impl App {
         self.transcriber.submit(Job {
             model: model.path,
             audio,
-            diarize: self.diarize,
+            diarize: self.config.diarize,
             language: self.config.language.clone(),
             split_mode: self.config.split_mode,
         });
@@ -213,15 +167,18 @@ impl App {
     /// and return that folder. Runs automatically after each transcription;
     /// `e` re-exports on demand.
     pub fn export(&mut self) -> Result<PathBuf> {
-        let (Some(audio), false) = (self.current_audio.clone(), self.segments.is_empty()) else {
+        let (Some(audio), false) = (
+            self.transcript.source.clone(),
+            self.transcript.segments.is_empty(),
+        ) else {
             anyhow::bail!("nothing to export yet");
         };
         let doc = TranscriptDoc {
-            segments: &self.segments,
+            segments: &self.transcript.segments,
             source_name: file_name(&audio),
-            duration_secs: self.audio_duration,
-            language: self.language.as_deref(),
-            model_name: self.used_model_name.as_deref(),
+            duration_secs: self.transcript.duration_secs,
+            language: self.transcript.language.as_deref(),
+            model_name: self.transcript.model_name.as_deref(),
         };
         let written = doc.write_all(&self.output_dir)?;
         Ok(written
@@ -236,7 +193,7 @@ impl App {
 mod tests {
     use super::*;
     use crate::hub::HubEvent;
-    use crate::transcribe::Event;
+    use crate::transcribe::{Event, Segment};
     use crossterm::event::KeyCode;
     use std::path::PathBuf;
     use std::sync::Mutex;
@@ -279,7 +236,7 @@ mod tests {
         std::fs::write(dir.join(".hidden.wav"), b"x").unwrap();
 
         let app = test_app(dir.clone());
-        let labels: Vec<String> = app.entries.iter().map(|e| e.label()).collect();
+        let labels: Vec<String> = app.browser.entries.iter().map(|e| e.label()).collect();
         assert_eq!(labels, vec!["../", "z_subdir/", "a.mp4 \u{29c9}", "b.wav"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -289,7 +246,7 @@ mod tests {
         let app_dir = tempdir();
         let mut app = test_app(app_dir.clone());
         app.output_dir = app_dir.join("out");
-        app.current_audio = Some(app_dir.join("clip.wav"));
+        app.transcript.source = Some(app_dir.join("clip.wav"));
 
         app.handle_event(Event::LoadingModel("m.bin".into()));
         assert!(app.busy());
@@ -298,7 +255,7 @@ mod tests {
             duration_secs: 10.0,
         });
         assert_eq!(app.work, WorkState::Transcribing { progress: 0 });
-        assert_eq!(app.audio_duration, Some(10.0));
+        assert_eq!(app.transcript.duration_secs, Some(10.0));
 
         app.handle_event(Event::Progress(40));
         assert_eq!(app.work, WorkState::Transcribing { progress: 40 });
@@ -309,7 +266,7 @@ mod tests {
             text: "hi".into(),
             speaker: None,
         }));
-        assert_eq!(app.segments.len(), 1);
+        assert_eq!(app.transcript.segments.len(), 1);
 
         app.handle_event(Event::Done {
             elapsed_secs: 2.0,
@@ -317,7 +274,7 @@ mod tests {
             language: Some("en".into()),
         });
         assert!(!app.busy());
-        assert_eq!(app.language.as_deref(), Some("en"));
+        assert_eq!(app.transcript.language.as_deref(), Some("en"));
         assert!(app.status.contains("lang: en"));
         // completion auto-exported into <output_dir>/clip_<timestamp>/
         assert!(app.status.contains("exported to"), "status: {}", app.status);
@@ -355,7 +312,7 @@ mod tests {
         let mut app = test_app(dir.clone());
 
         app.handle_dropped_text(&sub.display().to_string());
-        assert_eq!(app.cwd, sub);
+        assert_eq!(app.browser.cwd, sub);
 
         app.handle_dropped_text(&dir.join("doc.txt").display().to_string());
         assert!(app.status.contains("Unsupported file type"));
@@ -429,7 +386,7 @@ mod tests {
     fn hub_download_events_update_state_and_model_list() {
         let dir = tempdir();
         let mut app = test_app(dir.clone());
-        app.models_dir = dir.clone();
+        app.library.dir = dir.clone();
         app.open_hub();
 
         app.handle_hub_event(HubEvent::Progress {
@@ -442,13 +399,13 @@ mod tests {
         // Done rescans the models folder and selects the new model if none was
         let path = dir.join("ggml-x.bin");
         std::fs::write(&path, b"weights").unwrap();
-        app.selected_model = None;
+        app.library.selected = None;
         app.handle_hub_event(HubEvent::Done {
             file: "ggml-x.bin".into(),
             path: path.clone(),
         });
         assert!(app.hub.download.is_none());
-        assert_eq!(app.selected_model.as_ref().map(|m| m.path.clone()), Some(path));
+        assert_eq!(app.library.selected.as_ref().map(|m| m.path.clone()), Some(path));
 
         app.handle_hub_event(HubEvent::Failed {
             file: "y.bin".into(),
@@ -479,8 +436,8 @@ mod tests {
         let mut app = test_app(dir.clone());
 
         // models target: descend into aa/, then choose it
-        app.dir_picker = Some(DirPicker::at(DirTarget::Models, &dir));
-        let rows = app.dir_picker.as_ref().unwrap().rows();
+        app.settings.dir_picker = Some(DirPicker::at(DirTarget::Models, &dir));
+        let rows = app.settings.dir_picker.as_ref().unwrap().rows();
         assert_eq!(rows[0], DirRow::UseThis);
         assert_eq!(rows[1], DirRow::Parent);
         assert_eq!(rows[2..], [DirRow::Sub(dir.join("aa")), DirRow::Sub(dir.join("bb"))]);
@@ -488,22 +445,22 @@ mod tests {
         app.dir_picker_key(KeyCode::Down);
         app.dir_picker_key(KeyCode::Down);
         app.dir_picker_key(KeyCode::Enter); // enter aa/
-        assert_eq!(app.dir_picker.as_ref().unwrap().cwd, dir.join("aa"));
+        assert_eq!(app.settings.dir_picker.as_ref().unwrap().cwd, dir.join("aa"));
         app.dir_picker_key(KeyCode::Enter); // "use this folder"
-        assert!(app.dir_picker.is_none());
-        assert_eq!(app.models_dir, dir.join("aa").canonicalize().unwrap());
-        assert_eq!(app.config.models_dir, Some(app.models_dir.clone()));
+        assert!(app.settings.dir_picker.is_none());
+        assert_eq!(app.library.dir, dir.join("aa").canonicalize().unwrap());
+        assert_eq!(app.config.models_dir, Some(app.library.dir.clone()));
 
         // output target reuses the same component
-        app.dir_picker = Some(DirPicker::at(DirTarget::Output, &dir.join("bb")));
+        app.settings.dir_picker = Some(DirPicker::at(DirTarget::Output, &dir.join("bb")));
         app.dir_picker_key(KeyCode::Enter);
         assert_eq!(app.output_dir, dir.join("bb").canonicalize().unwrap());
         assert_eq!(app.config.output_dir, Some(app.output_dir.clone()));
 
         // Esc closes without committing
-        app.dir_picker = Some(DirPicker::at(DirTarget::Models, &dir));
+        app.settings.dir_picker = Some(DirPicker::at(DirTarget::Models, &dir));
         app.dir_picker_key(KeyCode::Esc);
-        assert!(app.dir_picker.is_none());
+        assert!(app.settings.dir_picker.is_none());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -519,14 +476,14 @@ mod tests {
         std::fs::write(folder.join("notes.txt"), b"not a model").unwrap();
 
         let mut app = test_app(dir.clone());
-        app.selected_model = None;
+        app.library.selected = None;
         app.set_models_dir_path(folder.clone());
 
-        let names: Vec<&str> = app.models.iter().map(|m| m.name.as_str()).collect();
+        let names: Vec<&str> = app.library.models.iter().map(|m| m.name.as_str()).collect();
         assert_eq!(names, vec!["ggml-large-v3.bin", "other.gguf"]);
         // with nothing selected before, the scan adopts large-v3
         assert_eq!(
-            app.selected_model.as_ref().map(|m| m.name.as_str()),
+            app.library.selected.as_ref().map(|m| m.name.as_str()),
             Some("ggml-large-v3.bin")
         );
         assert!(app.status.contains("2 model(s) found"), "{}", app.status);
@@ -548,15 +505,15 @@ mod tests {
         let mut app = test_app(dir.clone());
         app.set_models_dir_path(old.clone());
         // dismiss any prompt about the host machine's previous folder
-        app.move_prompt = None;
+        app.settings.move_prompt = None;
 
         app.set_models_dir_path(new.clone());
-        let prompt = app.move_prompt.as_ref().expect("prompt should open");
+        let prompt = app.settings.move_prompt.as_ref().expect("prompt should open");
         assert_eq!(prompt.count, 2);
         assert!(prompt.yes_selected);
 
         app.move_prompt_key(KeyCode::Enter); // Yes is preselected
-        assert!(app.move_prompt.is_none());
+        assert!(app.settings.move_prompt.is_none());
         // the move runs on a worker thread; wait for its completion event
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         while !app.status.starts_with("Moved") {
@@ -565,11 +522,11 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(app.status.contains("Moved 2 model(s)"), "{}", app.status);
-        assert!(app.models_dir.join("ggml-a.bin").is_file());
+        assert!(app.library.dir.join("ggml-a.bin").is_file());
         assert!(!old.join("ggml-a.bin").exists());
-        assert_eq!(app.models.len(), 2);
+        assert_eq!(app.library.models.len(), 2);
         // with nothing selected before, the arrival adopts a model
-        assert!(app.selected_model.is_some());
+        assert!(app.library.selected.is_some());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -586,14 +543,14 @@ mod tests {
 
         let mut app = test_app(dir.clone());
         app.set_models_dir_path(old.clone());
-        app.move_prompt = None;
+        app.settings.move_prompt = None;
         app.set_models_dir_path(new.clone());
-        assert!(app.move_prompt.is_some());
+        assert!(app.settings.move_prompt.is_some());
 
         // toggle to No, confirm with Enter
         app.move_prompt_key(KeyCode::Left);
         app.move_prompt_key(KeyCode::Enter);
-        assert!(app.move_prompt.is_none());
+        assert!(app.settings.move_prompt.is_none());
         assert!(old.join("ggml-a.bin").is_file());
         assert!(!new.join("ggml-a.bin").exists());
         assert!(app.status.contains("left in the previous folder"));
@@ -636,7 +593,7 @@ mod tests {
         let dir = tempdir();
         std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
         let mut app = test_app(dir.clone());
-        app.selected_model = None;
+        app.library.selected = None;
 
         let model = ModelFile {
             path: dir.join("ggml-x.bin"),
@@ -645,7 +602,7 @@ mod tests {
         };
         app.choose_model(model.clone());
         assert_eq!(app.config.default_model.as_deref(), Some("ggml-x.bin"));
-        assert_eq!(app.selected_model.as_ref().map(|m| m.name.as_str()), Some("ggml-x.bin"));
+        assert_eq!(app.library.selected.as_ref().map(|m| m.name.as_str()), Some("ggml-x.bin"));
         // lazy by design: selection is metadata; loading happens at job time
         assert!(
             app.status.contains("loads when the next transcription starts"),

@@ -85,9 +85,7 @@ impl App {
             return;
         };
         if path.is_dir() {
-            self.cwd = path;
-            self.file_selected = 0;
-            self.refresh_entries();
+            self.browser.set_cwd(path);
             self.focus = Focus::Files;
             return;
         }
