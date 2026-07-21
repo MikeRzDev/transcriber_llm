@@ -11,7 +11,8 @@ use crate::export::ExportFormat;
 use crate::hub::HubEvent;
 use crate::models;
 
-/// The rows of the settings menu, in display order.
+/// The rows of the settings menu, in display order. Diarization and
+/// language live on the base screen as hotkeys (`d`, `i`), not here.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SettingsRow {
     DefaultModel,
@@ -19,22 +20,18 @@ pub enum SettingsRow {
     OutputFolder,
     ExportFormats,
     ModelManagement,
-    Diarize,
     SplitMode,
-    Language,
     HfToken,
 }
 
 impl SettingsRow {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 7] = [
         Self::DefaultModel,
         Self::ModelsFolder,
         Self::OutputFolder,
         Self::ExportFormats,
         Self::ModelManagement,
-        Self::Diarize,
         Self::SplitMode,
-        Self::Language,
         Self::HfToken,
     ];
 
@@ -50,12 +47,10 @@ impl SettingsRow {
 }
 
 /// State of the settings modal and the flows it can open on top of
-/// itself (folder picker, move prompt, inline language entry).
+/// itself (folder picker, move prompt, inline token entry).
 pub struct SettingsUi {
     pub open: bool,
     pub selected: SettingsRow,
-    /// Some(text) while the language code is being edited
-    pub language_input: Option<String>,
     /// Some(text) while the Hugging Face token is being edited
     pub hf_token_input: Option<String>,
     /// Some while a folder is being chosen via the directory browser
@@ -71,7 +66,6 @@ impl SettingsUi {
         Self {
             open: false,
             selected: SettingsRow::DefaultModel,
-            language_input: None,
             hf_token_input: None,
             dir_picker: None,
             move_prompt: None,
@@ -211,21 +205,6 @@ impl App {
             }
             return;
         }
-        if let Some(input) = &mut self.settings.language_input {
-            match code {
-                KeyCode::Char(c) => input.push(c),
-                KeyCode::Backspace => {
-                    input.pop();
-                }
-                KeyCode::Enter => {
-                    let text = self.settings.language_input.take().unwrap_or_default();
-                    self.set_language(&text);
-                }
-                KeyCode::Esc => self.settings.language_input = None,
-                _ => {}
-            }
-            return;
-        }
         match code {
             KeyCode::Esc | KeyCode::Char('s') | KeyCode::Char('q') => {
                 self.settings.open = false;
@@ -245,12 +224,7 @@ impl App {
                     self.settings.open = false;
                     self.open_hub();
                 }
-                SettingsRow::Diarize => self.cycle_diarize(),
                 SettingsRow::SplitMode => self.cycle_split_mode(),
-                SettingsRow::Language => {
-                    self.settings.language_input =
-                        Some(self.config.language.clone().unwrap_or_default())
-                }
                 SettingsRow::HfToken => {
                     self.settings.hf_token_input =
                         Some(self.config.hf_token.clone().unwrap_or_default())

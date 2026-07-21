@@ -32,7 +32,7 @@ pub(super) fn draw_start_prompt(frame: &mut Frame, app: &App) {
         .library
         .selected
         .as_ref()
-        .map(|m| m.name.clone())
+        .map(|m| m.display_name())
         .unwrap_or_else(|| "none — pick one in settings".into());
     let formats = app
         .config

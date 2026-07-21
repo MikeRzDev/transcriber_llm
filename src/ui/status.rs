@@ -117,6 +117,12 @@ fn key_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             ("Enter", "save"),
             ("Esc", "cancel"),
         ]
+    } else if app.language_input.is_some() {
+        vec![
+            ("a-z", "code (empty = auto)"),
+            ("Enter", "save"),
+            ("Esc", "cancel"),
+        ]
     } else {
         use crate::diarize::{DiarizeMethod, DiarizeStrategy};
         // The cancel key only exists while there is a job to cancel
@@ -135,6 +141,7 @@ fn key_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             ("m", "models"),
             ("s", "settings"),
             ("d", "diarize"),
+            ("i", "language"),
         ]);
         // The speaker options only exist while diarization is on: the
         // count steers the clustering strategies, naming labels any

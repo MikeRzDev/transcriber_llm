@@ -41,7 +41,7 @@ pub(super) fn draw_model_picker(frame: &mut Frame, app: &App) {
             let marker = if selected_marker { "● " } else { "  " };
             ListItem::new(Line::from(vec![
                 Span::styled(marker, Style::default().fg(ACCENT)),
-                Span::raw(m.name.clone()),
+                Span::raw(m.display_name()),
                 Span::styled(format!("  {}", m.size_human()), Style::default().fg(DIM)),
             ]))
         })

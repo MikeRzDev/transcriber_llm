@@ -104,6 +104,8 @@ pub struct App {
     pub naming: Option<SpeakerNaming>,
     /// Some(text) while the diarization speaker count is being edited (`p`)
     pub speakers_input: Option<String>,
+    /// Some(text) while the transcription language is being edited (`i`)
+    pub language_input: Option<String>,
     /// Some while offering to download the missing tdrz model
     pub tdrz_prompt: Option<TdrzDownloadPrompt>,
     /// Timestamped record of everything since the first file was loaded
@@ -163,6 +165,7 @@ impl App {
             start_prompt: None,
             naming: None,
             speakers_input: None,
+            language_input: None,
             tdrz_prompt: None,
             job_log: JobLog::new(),
             // The log view is the default; `l` switches to the transcript
@@ -377,9 +380,12 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    /// Serializes tests that point TRANSCRIBE_STT_CONFIG at their tempdir:
-    /// the variable is process-global, so concurrent setters would make one
+    /// Serializes tests that touch TRANSCRIBE_STT_CONFIG or HF_TOKEN:
+    /// both are process-global, so concurrent setters would make one
     /// test's config::save land in another test's (soon-deleted) folder.
+    /// Readers need it too — every App::new loads the config from that
+    /// path and exports HF_TOKEN from it, so an unlocked test_app can
+    /// pick up (and re-export) a locked test's freshly saved token.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn lock_env() -> std::sync::MutexGuard<'static, ()> {
@@ -415,6 +421,7 @@ mod tests {
         std::fs::write(dir.join("notes.txt"), b"x").unwrap();
         std::fs::write(dir.join(".hidden.wav"), b"x").unwrap();
 
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let app = test_app(dir.clone());
         let labels: Vec<String> = app.browser.entries.iter().map(|e| e.label()).collect();
         assert_eq!(labels, vec!["../", "z_subdir/", "a.mp4 \u{29c9}", "b.wav"]);
@@ -424,6 +431,7 @@ mod tests {
     #[test]
     fn every_worker_event_lands_in_the_job_log() {
         let dir = tempdir();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
         app.handle_event(Event::LoadingModel("m.bin".into()));
         app.handle_event(Event::LoadProgress(50));
@@ -465,6 +473,7 @@ mod tests {
         use crossterm::event::KeyModifiers;
         let dir = tempdir();
         std::fs::write(dir.join("clip.wav"), b"x").unwrap();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
 
         app.request_transcription(dir.join("clip.wav"));
@@ -551,6 +560,7 @@ mod tests {
         use crate::diarize::{DiarizeMethod, DiarizeStrategy};
         let dir = tempdir();
         std::fs::write(dir.join("clip.wav"), b"x").unwrap();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
         app.library.dir = dir.clone();
         app.library.models.clear();
@@ -642,6 +652,46 @@ mod tests {
     }
 
     #[test]
+    fn language_hotkey_edits_and_persists_the_code() {
+        use crossterm::event::KeyModifiers;
+        let _guard = lock_env(); // Enter persists the language
+        let dir = tempdir();
+        std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
+        let mut app = test_app(dir.clone());
+
+        // `i` opens the input; letters only, Enter saves a valid code
+        app.on_key(KeyCode::Char('i'), KeyModifiers::NONE);
+        assert_eq!(app.language_input.as_deref(), Some(""));
+        app.on_key(KeyCode::Char('3'), KeyModifiers::NONE); // not a letter
+        assert_eq!(app.language_input.as_deref(), Some(""));
+        for c in "en".chars() {
+            app.on_key(KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(app.language_input.is_none());
+        assert_eq!(app.config.language.as_deref(), Some("en"));
+        assert_eq!(config::load().language.as_deref(), Some("en"));
+
+        // Reopening prefills the saved code; Esc keeps it untouched
+        app.on_key(KeyCode::Char('i'), KeyModifiers::NONE);
+        assert_eq!(app.language_input.as_deref(), Some("en"));
+        app.on_key(KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app.language_input.is_none());
+        assert_eq!(app.config.language.as_deref(), Some("en"));
+
+        // "auto" clears the pin back to detection
+        app.on_key(KeyCode::Char('i'), KeyModifiers::NONE);
+        app.on_key(KeyCode::Backspace, KeyModifiers::NONE);
+        app.on_key(KeyCode::Backspace, KeyModifiers::NONE);
+        for c in "auto".chars() {
+            app.on_key(KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.config.language, None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn hf_token_setting_persists_and_reaches_the_environment() {
         let _guard = lock_env(); // both files and HF_TOKEN are process-global
         let dir = tempdir();
@@ -686,6 +736,7 @@ mod tests {
     #[test]
     fn gated_download_failure_names_the_consent_page() {
         let dir = tempdir();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
         app.library.dir = dir.clone();
         app.open_hub();
@@ -772,6 +823,7 @@ mod tests {
     fn naming_dialog_renames_speakers_and_reexports_on_close() {
         use crossterm::event::KeyModifiers;
         let dir = tempdir();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
         app.output_dir = dir.join("out");
 
@@ -830,6 +882,7 @@ mod tests {
     fn tdrz_job_without_the_model_explains_the_download() {
         use crate::diarize::DiarizeStrategy;
         let dir = tempdir();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
         app.library.dir = dir.clone();
         app.library.models.clear();
@@ -889,6 +942,7 @@ mod tests {
     #[test]
     fn worker_events_drive_state_machine_and_auto_export() {
         let app_dir = tempdir();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(app_dir.clone());
         app.output_dir = app_dir.join("out");
         app.transcript.source = Some(app_dir.join("clip.wav"));
@@ -939,6 +993,7 @@ mod tests {
     #[test]
     fn error_event_resets_to_idle() {
         let dir = tempdir();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
         app.handle_event(Event::Decoding);
         assert!(app.busy());
@@ -954,6 +1009,7 @@ mod tests {
         let sub = dir.join("inner");
         std::fs::create_dir(&sub).unwrap();
         std::fs::write(dir.join("doc.txt"), b"x").unwrap();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
 
         app.handle_dropped_text(&sub.display().to_string());
@@ -973,6 +1029,7 @@ mod tests {
     #[test]
     fn hub_modal_typing_navigation_and_esc_layers() {
         let dir = tempdir();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
         app.library.dir = dir.clone(); // empty models folder → default view is the 3 suggestions
 
@@ -1012,6 +1069,7 @@ mod tests {
     #[test]
     fn hub_enter_on_unsupported_suggestion_explains_instead_of_downloading() {
         let dir = tempdir();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
         app.library.dir = dir.clone(); // empty folder → default rows match suggested order
         app.open_hub();
@@ -1043,6 +1101,7 @@ mod tests {
     #[test]
     fn hub_mlx_suggestions_are_dir_models_named_after_the_repo() {
         let dir = tempdir();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
         app.library.dir = dir.clone();
         app.open_hub();
@@ -1062,6 +1121,7 @@ mod tests {
     #[test]
     fn hub_dir_download_done_scans_the_new_directory_model() {
         let dir = tempdir();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
         app.library.dir = dir.clone();
         app.library.selected = None;
@@ -1102,6 +1162,7 @@ mod tests {
     #[test]
     fn hub_file_view_lists_variants_before_files() {
         let dir = tempdir();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
         app.library.dir = dir.clone();
         app.open_hub();
@@ -1298,6 +1359,7 @@ mod tests {
     #[test]
     fn hub_download_events_update_state_and_model_list() {
         let dir = tempdir();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
         app.library.dir = dir.clone();
         app.open_hub();
@@ -1337,6 +1399,7 @@ mod tests {
     #[test]
     fn hub_pause_then_cancel_clears_state_and_partial_file() {
         let dir = tempdir();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
         app.library.dir = dir.clone();
         app.open_hub();
@@ -1370,6 +1433,7 @@ mod tests {
     #[test]
     fn export_with_no_transcript_errors() {
         let dir = tempdir();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
         let err = app.export().unwrap_err();
         assert!(err.to_string().contains("nothing to export"));
@@ -1522,6 +1586,7 @@ mod tests {
     #[test]
     fn load_and_unload_events_drive_the_progress_states() {
         let dir = tempdir();
+        let _guard = lock_env(); // App::new reads the config path and exports HF_TOKEN
         let mut app = test_app(dir.clone());
 
         app.handle_event(Event::LoadingModel("m.bin".into()));

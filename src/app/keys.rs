@@ -52,6 +52,10 @@ impl App {
             self.speakers_key(code);
             return;
         }
+        if self.language_input.is_some() {
+            self.language_key(code);
+            return;
+        }
         self.main_key(code);
     }
 
@@ -98,6 +102,33 @@ impl App {
                 );
             }
         }
+    }
+
+    /// Keys for the transcription-language input (`i` on the base
+    /// screen). Codes are letters only ("en", "de", or "auto").
+    fn language_key(&mut self, code: KeyCode) {
+        let Some(input) = &mut self.language_input else {
+            return;
+        };
+        match code {
+            KeyCode::Char(c) if c.is_ascii_alphabetic() && input.len() < 12 => {
+                input.push(c.to_ascii_lowercase())
+            }
+            KeyCode::Backspace => {
+                input.pop();
+            }
+            KeyCode::Enter => {
+                let text = self.language_input.take().unwrap_or_default();
+                self.set_language(&text);
+            }
+            KeyCode::Esc => self.language_input = None,
+            _ => {}
+        }
+    }
+
+    /// Open the language input (`i`), prefilled with the saved code.
+    fn open_language_input(&mut self) {
+        self.language_input = Some(self.config.language.clone().unwrap_or_default());
     }
 
     /// Keys for the "transcribe this file?" confirmation dialog.
@@ -197,6 +228,7 @@ impl App {
                 self.settings.open = true;
             }
             KeyCode::Char('d') => self.cycle_diarize(),
+            KeyCode::Char('i') => self.open_language_input(),
             KeyCode::Char('p') => self.open_speakers_input(),
             KeyCode::Char('n') => self.open_speaker_naming(),
             KeyCode::Char('l') => {

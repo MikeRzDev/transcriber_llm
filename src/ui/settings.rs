@@ -18,31 +18,15 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
         .library
         .selected
         .as_ref()
-        .map(|m| format!("{} ({})", m.name, m.size_human()))
+        .map(|m| format!("{} ({})", m.display_name(), m.size_human()))
         .unwrap_or_else(|| "none".into());
 
     let row_style = |row: SettingsRow| {
-        let editing =
-            app.settings.language_input.is_some() || app.settings.hf_token_input.is_some();
+        let editing = app.settings.hf_token_input.is_some();
         if app.settings.selected == row && !editing {
             highlight_style()
         } else {
             Style::default()
-        }
-    };
-
-    // Cheap on purpose (rendered per frame): resolving the strategy is
-    // pure; the download checks live in the status line via Enter/d.
-    let diarize_state = {
-        use crate::diarize::DiarizeStrategy;
-        let strategy = app.config.diarize;
-        match strategy {
-            DiarizeStrategy::Auto => {
-                let method = strategy
-                    .resolve(app.library.selected.as_ref().map(|m| m.name.as_str()));
-                format!("Auto → {}", method.label())
-            }
-            _ => strategy.label().to_string(),
         }
     };
 
@@ -68,26 +52,6 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
                 }
             ),
             row_style(SettingsRow::HfToken),
-        ))
-    };
-
-    let language_line: Line = if let Some(input) = &app.settings.language_input {
-        Line::from(vec![
-            Span::raw("  Language:       "),
-            Span::styled(
-                format!("{input}▏"),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ])
-    } else {
-        Line::from(Span::styled(
-            format!(
-                "  Language:       {}",
-                app.config.language.as_deref().unwrap_or("auto-detect")
-            ),
-            row_style(SettingsRow::Language),
         ))
     };
 
@@ -127,23 +91,14 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
         )),
         Line::raw(""),
         Line::from(Span::styled(
-            format!("  Diarization:    {diarize_state}"),
-            row_style(SettingsRow::Diarize),
-        )),
-        Line::raw(""),
-        Line::from(Span::styled(
             format!("  Split mode:     {}", app.config.split_mode.label()),
             row_style(SettingsRow::SplitMode),
         )),
         Line::raw(""),
-        language_line,
-        Line::raw(""),
         hf_token_line,
         Line::raw(""),
         Line::from(Span::styled(
-            if app.settings.language_input.is_some() {
-                "  Type an ISO 639-1 code (en, es, de, fr…) or auto, Enter to save"
-            } else if app.settings.hf_token_input.is_some() {
+            if app.settings.hf_token_input.is_some() {
                 "  Paste your hf.co token (Enter saves, empty clears) — used for gated models"
             } else {
                 "  ↑↓ select · Enter change · Esc close  (saved to ~/.config/transcribe-stt)"
@@ -153,9 +108,9 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
     ];
 
     // Size the modal to its content: a fixed percentage height used to
-    // clip the bottom rows (diarization, speakers, language) invisibly
-    // on short terminals. If even the full content cannot fit, drop the
-    // blank separator rows first — every setting stays reachable.
+    // clip the bottom rows invisibly on short terminals. If even the
+    // full content cannot fit, drop the blank separator rows first —
+    // every setting stays reachable.
     let mut lines = lines;
     if lines.len() as u16 + 2 > frame.area().height {
         lines.retain(|l| l.width() != 0);

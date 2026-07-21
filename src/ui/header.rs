@@ -12,7 +12,7 @@ pub(super) fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         .library
         .selected
         .as_ref()
-        .map(|m| format!("{} ({})", m.name, m.size_human()))
+        .map(|m| format!("{} ({})", m.display_name(), m.size_human()))
         .unwrap_or_else(|| "no model — press m".into());
     let line = Line::from(vec![
         Span::styled(

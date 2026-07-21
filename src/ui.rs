@@ -6,6 +6,7 @@ mod dir_picker;
 mod files;
 mod header;
 mod hub;
+mod language;
 mod layout;
 mod log;
 mod model_picker;
@@ -63,6 +64,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
     if app.speakers_input.is_some() {
         speakers::draw_speakers_prompt(frame, app);
+    }
+    if app.language_input.is_some() {
+        language::draw_language_prompt(frame, app);
     }
     if app.naming.is_some() {
         naming::draw_speaker_naming(frame, app);

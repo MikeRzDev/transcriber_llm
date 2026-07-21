@@ -75,6 +75,81 @@ impl ModelFile {
     pub fn size_human(&self) -> String {
         crate::format::human_size(self.size_bytes)
     }
+
+    pub fn display_name(&self) -> String {
+        display_name(&self.name)
+    }
+}
+
+/// The model name a person recognizes, derived from whisper.cpp's file
+/// naming: `ggml-large-v3-turbo-q5_0.bin` is "Whisper Large v3 Turbo
+/// (q5_0)". Display only — the file name stays the model's identity in
+/// config, matching, and job routing. Names that don't follow the
+/// `ggml-*.bin` convention (gguf drops, MLX dirs, hand-renamed files)
+/// pass through untouched rather than guessing.
+pub fn display_name(name: &str) -> String {
+    let stripped = name
+        .strip_prefix("ggml-")
+        .and_then(|r| r.strip_suffix(".bin").or_else(|| r.strip_suffix(".gguf")));
+    let Some(stripped) = stripped else {
+        return name.to_string();
+    };
+
+    let english = stripped.contains(".en");
+    let tdrz = stripped.contains("-tdrz");
+    let mut core = stripped.replace(".en", "").replace("-tdrz", "");
+
+    // Trailing quantization tag: q + digit + [a-z0-9_]* (q5_0, q8_0, q4_k)
+    let mut quant = None;
+    if let Some((head, tail)) = core.rsplit_once('-') {
+        let mut chars = tail.chars();
+        if chars.next() == Some('q')
+            && chars.next().is_some_and(|c| c.is_ascii_digit())
+            && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
+            quant = Some(tail.to_string());
+            core = head.to_string();
+        }
+    }
+    if core.is_empty() {
+        return name.to_string();
+    }
+
+    // "large-v3-turbo" → "Large v3 Turbo": capitalize words, keep
+    // version tags (v1, v2, v3…) as-is
+    let core = core
+        .split('-')
+        .map(|word| {
+            let is_version =
+                word.len() >= 2 && word.starts_with('v') && word[1..].chars().all(|c| c.is_ascii_digit());
+            if is_version {
+                word.to_string()
+            } else {
+                let mut chars = word.chars();
+                match chars.next() {
+                    Some(first) => first.to_uppercase().chain(chars).collect(),
+                    None => String::new(),
+                }
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(" ");
+
+    let mut extras: Vec<&str> = Vec::new();
+    if english {
+        extras.push("English");
+    }
+    if tdrz {
+        extras.push("tinydiarize");
+    }
+    if let Some(quant) = &quant {
+        extras.push(quant);
+    }
+    if extras.is_empty() {
+        format!("Whisper {core}")
+    } else {
+        format!("Whisper {core} ({})", extras.join(", "))
+    }
 }
 
 /// tinydiarize builds carry speaker-turn tokens and are named `*-tdrz*`.
@@ -450,6 +525,34 @@ mod tests {
         assert!(is_model_file(Path::new("x.gguf")));
         assert!(!is_model_file(Path::new("x.txt")));
         assert!(!is_model_file(Path::new("noext")));
+    }
+
+    #[test]
+    fn display_name_translates_whisper_cpp_files() {
+        assert_eq!(display_name("ggml-large-v3.bin"), "Whisper Large v3");
+        assert_eq!(
+            display_name("ggml-large-v3-turbo-q5_0.bin"),
+            "Whisper Large v3 Turbo (q5_0)"
+        );
+        assert_eq!(display_name("ggml-base.en.bin"), "Whisper Base (English)");
+        assert_eq!(
+            display_name("ggml-small.en-tdrz.bin"),
+            "Whisper Small (English, tinydiarize)"
+        );
+        assert_eq!(display_name("ggml-tiny-q5_1.bin"), "Whisper Tiny (q5_1)");
+        assert_eq!(
+            display_name("ggml-distil-large-v3.bin"),
+            "Whisper Distil Large v3"
+        );
+    }
+
+    #[test]
+    fn display_name_leaves_unrecognized_names_alone() {
+        // no ggml- prefix, gguf drops, MLX dirs: shown as-is
+        assert_eq!(display_name("large-v3.bin"), "large-v3.bin");
+        assert_eq!(display_name("voice-model.gguf"), "voice-model.gguf");
+        assert_eq!(display_name("parakeet-tdt-0.6b-v3"), "parakeet-tdt-0.6b-v3");
+        assert_eq!(display_name("ggml-.bin"), "ggml-.bin");
     }
 
     #[test]
