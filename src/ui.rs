@@ -24,7 +24,8 @@ use ratatui::Frame;
 use crate::app::App;
 
 pub fn draw(frame: &mut Frame, app: &App) {
-    let areas = layout::areas(frame.area());
+    let key_rows = status::keys_rows(app, frame.area().width);
+    let areas = layout::areas(frame.area(), key_rows);
 
     header::draw_header(frame, areas.header, app);
     files::draw_files(frame, areas.files, app);

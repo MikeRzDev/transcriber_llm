@@ -5,6 +5,17 @@ use crate::app::{App, WorkState};
 use crate::format::clock_time;
 use crate::transcribe::Event;
 
+/// One updating log line per phase: `label: [#####·····] 47%`.
+fn pct_line(label: &str, p: i32) -> String {
+    const WIDTH: i32 = 20;
+    let filled = (p.clamp(0, 100) * WIDTH / 100) as usize;
+    format!(
+        "{label}: [{}{}] {p}%",
+        "#".repeat(filled),
+        "·".repeat(WIDTH as usize - filled)
+    )
+}
+
 impl App {
     pub fn handle_event(&mut self, event: Event) {
         match event {
@@ -16,7 +27,7 @@ impl App {
             Event::LoadProgress(p) => {
                 if p >= 0 {
                     self.job_log
-                        .push_tagged("load-pct", &format!("loading model: {p}%"));
+                        .push_tagged("load-pct", &pct_line("loading model", p));
                 }
                 if let WorkState::LoadingModel { progress, .. } = &mut self.work {
                     *progress = p;
@@ -55,7 +66,7 @@ impl App {
             Event::DecodeProgress(p) => {
                 if p >= 0 {
                     self.job_log
-                        .push_tagged("decode-pct", &format!("extracting audio: {p}%"));
+                        .push_tagged("decode-pct", &pct_line("extracting audio", p));
                 }
                 if let WorkState::Decoding { progress } = &mut self.work {
                     *progress = p;
@@ -71,7 +82,7 @@ impl App {
             Event::Progress(p) => {
                 if p >= 0 {
                     self.job_log
-                        .push_tagged("transcribe-pct", &format!("transcribing: {p}%"));
+                        .push_tagged("transcribe-pct", &pct_line("transcribing", p));
                 }
                 if let WorkState::Transcribing { progress } = &mut self.work {
                     *progress = p;
@@ -88,7 +99,7 @@ impl App {
             Event::EngineHeartbeat(secs) => {
                 // Liveness while a silent subprocess works; consecutive
                 // beats coalesce into one updating line
-                let msg = format!("engine working… {secs}s elapsed, no output yet");
+                let msg = format!("engine working… {secs}s elapsed (model computing)");
                 self.job_log.push_tagged("engine-heartbeat", &msg);
                 if self.busy() {
                     self.status = msg;

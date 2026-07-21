@@ -11,7 +11,8 @@ use crate::ui::theme::{ACCENT, DIM};
 /// Pin the log scroll to its content for this frame. Runs in the update
 /// phase (before `draw`) so rendering itself never mutates state.
 pub fn clamp_log(app: &mut App, area: Rect) {
-    let log_area = areas(area).transcript;
+    let key_rows = crate::ui::status::keys_rows(app, area.width);
+    let log_area = areas(area, key_rows).transcript;
     let viewport = log_area.height.saturating_sub(2) as usize;
     app.job_log.clamp(viewport);
 }

@@ -4,6 +4,7 @@
 //! right pane in place of the transcript (toggled with `l`).
 
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 
 /// Hard cap so a very long session cannot grow without bound; beyond it
 /// the oldest lines fall off the front.
@@ -72,6 +73,29 @@ impl JobLog {
         self.follow = true;
     }
 
+    /// Wipe the log and reset scroll/follow (the `x` hotkey).
+    pub fn clear(&mut self) {
+        self.lines.clear();
+        self.scroll = 0;
+        self.follow = true;
+        self.last_tag = None;
+    }
+
+    /// Write every line to `<dir>/log_<YYYYMMDD_HHMMSS>.log` and return
+    /// the path. An empty log is an error, not an empty file.
+    pub fn export_to(&self, dir: &Path) -> anyhow::Result<PathBuf> {
+        anyhow::ensure!(!self.lines.is_empty(), "log is empty — nothing to export");
+        std::fs::create_dir_all(dir)?;
+        let path = dir.join(format!("log_{}.log", crate::format::file_timestamp()));
+        let mut contents = String::with_capacity(self.lines.iter().map(|l| l.len() + 1).sum());
+        for line in &self.lines {
+            contents.push_str(line);
+            contents.push('\n');
+        }
+        std::fs::write(&path, contents)?;
+        Ok(path)
+    }
+
     /// Pre-draw clamp, mirroring the transcript pane: follow pins to the
     /// tail; manual scroll clamps into range and re-engages follow when
     /// it reaches the end.
@@ -120,6 +144,32 @@ mod tests {
         log.push("segment arrived");
         log.push_tagged("pct", "transcribing: 30%");
         assert_eq!(log.lines.len(), 3);
+    }
+
+    #[test]
+    fn export_writes_timestamped_file_and_rejects_empty() {
+        let dir = std::env::temp_dir().join(format!(
+            "transcribe-stt-joblog-{}",
+            std::process::id()
+        ));
+        let empty = JobLog::new();
+        assert!(empty.export_to(&dir).is_err());
+        assert!(!dir.exists(), "empty export must not create the folder");
+
+        let mut log = JobLog::new();
+        log.push("first line");
+        log.push("second line");
+        let path = log.export_to(&dir).unwrap();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(
+            name.starts_with("log_") && name.ends_with(".log"),
+            "name: {name}"
+        );
+        assert_eq!(name.len(), "log_YYYYMMDD_HHMMSS.log".len());
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("] first line\n"));
+        assert!(contents.ends_with("] second line\n"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

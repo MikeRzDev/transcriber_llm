@@ -54,8 +54,9 @@ pub(super) fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-pub(super) fn draw_keys(frame: &mut Frame, area: Rect, app: &App) {
-    let keys: Vec<(&str, &str)> = if app.start_prompt.is_some() {
+/// The key hints for the current UI state.
+fn key_hints(app: &App) -> Vec<(&'static str, &'static str)> {
+    if app.start_prompt.is_some() {
         vec![
             ("←→", "choose"),
             ("Enter", "confirm"),
@@ -108,20 +109,101 @@ pub(super) fn draw_keys(frame: &mut Frame, area: Rect, app: &App) {
             ("Enter", "transcribe"),
             ("drop", "file → transcribe"),
             ("l", if app.show_log { "transcript" } else { "log" }),
+            ("e", "export log"),
+            ("x", "clear log"),
             ("m", "models"),
             ("s", "settings"),
             ("d", "diarize"),
             ("q", "quit"),
         ]);
         keys
-    };
-    let mut spans: Vec<Span> = Vec::new();
-    for (key, desc) in keys {
-        spans.push(Span::styled(
-            format!(" {key} "),
-            Style::default().fg(Color::Black).bg(DIM),
-        ));
-        spans.push(Span::styled(format!(" {desc}  "), Style::default().fg(DIM)));
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// Rendered width of one hint: ` key ` + ` desc  `.
+fn hint_width(key: &str, desc: &str) -> usize {
+    key.chars().count() + desc.chars().count() + 5
+}
+
+/// Greedy-wrap the hints into rows that fit `width` columns. Always at
+/// least one row; a hint wider than the window gets a row to itself.
+fn wrap_hints<'a>(
+    hints: &[(&'a str, &'a str)],
+    width: usize,
+) -> Vec<Vec<(&'a str, &'a str)>> {
+    let mut rows: Vec<Vec<(&str, &str)>> = vec![Vec::new()];
+    let mut used = 0;
+    for &(key, desc) in hints {
+        let w = hint_width(key, desc);
+        if used > 0 && used + w > width {
+            rows.push(Vec::new());
+            used = 0;
+        }
+        rows.last_mut().unwrap().push((key, desc));
+        used += w;
+    }
+    rows
+}
+
+/// How many rows the key bar needs at this width — the layout reserves
+/// exactly this many lines, so nothing is ever clipped.
+pub(super) fn keys_rows(app: &App, width: u16) -> u16 {
+    wrap_hints(&key_hints(app), width.max(1) as usize).len() as u16
+}
+
+pub(super) fn draw_keys(frame: &mut Frame, area: Rect, app: &App) {
+    let hints = key_hints(app);
+    let lines: Vec<Line> = wrap_hints(&hints, area.width.max(1) as usize)
+        .into_iter()
+        .map(|row| {
+            let mut spans: Vec<Span> = Vec::new();
+            for (key, desc) in row {
+                spans.push(Span::styled(
+                    format!(" {key} "),
+                    Style::default().fg(Color::Black).bg(DIM),
+                ));
+                spans.push(Span::styled(format!(" {desc}  "), Style::default().fg(DIM)));
+            }
+            Line::from(spans)
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{hint_width, wrap_hints};
+
+    #[test]
+    fn hints_wrap_to_fit_and_never_drop() {
+        let hints = [
+            ("Tab", "pane"),
+            ("Enter", "transcribe"),
+            ("drop", "file → transcribe"),
+            ("l", "log"),
+            ("e", "export log"),
+            ("x", "clear log"),
+            ("m", "models"),
+            ("s", "settings"),
+            ("d", "diarize"),
+            ("q", "quit"),
+        ];
+        // Wide window: everything on one row
+        let total: usize = hints.iter().map(|(k, d)| hint_width(k, d)).sum();
+        assert_eq!(wrap_hints(&hints, total).len(), 1);
+
+        // Narrow window: multiple rows, each within width, nothing lost
+        let rows = wrap_hints(&hints, 40);
+        assert!(rows.len() > 1);
+        let kept: usize = rows.iter().map(|r| r.len()).sum();
+        assert_eq!(kept, hints.len());
+        for row in &rows {
+            let w: usize = row.iter().map(|(k, d)| hint_width(k, d)).sum();
+            assert!(w <= 40, "row too wide: {w}");
+        }
+
+        // Degenerate width: one hint per row, still nothing lost
+        let rows = wrap_hints(&hints, 1);
+        assert_eq!(rows.iter().map(|r| r.len()).sum::<usize>(), hints.len());
+    }
 }

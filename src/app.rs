@@ -223,6 +223,26 @@ impl App {
         });
     }
 
+    /// Wipe the job log (`x`). The cleared log starts with a marker line
+    /// so the pane confirms what happened.
+    pub fn clear_log(&mut self) {
+        self.job_log.clear();
+        self.job_log.push("log cleared");
+        self.status = "Job log cleared".into();
+    }
+
+    /// Snapshot the job log to `<output_dir>/logs/log_<timestamp>.log`.
+    /// Available at any time via `e`, including mid-job.
+    pub fn export_log(&mut self) {
+        match self.job_log.export_to(&self.output_dir.join("logs")) {
+            Ok(path) => {
+                self.job_log.push(format!("log exported: {}", path.display()));
+                self.status = format!("Log exported to {}", path.display());
+            }
+            Err(e) => self.status = format!("Log export failed: {e}"),
+        }
+    }
+
     /// Write the configured export formats into
     /// `<output_dir>/<source>_<timestamp>/` and return that folder. Runs
     /// automatically after each successful transcription.
@@ -331,12 +351,12 @@ mod tests {
         let joined = joined.join("\n");
         for expected in [
             "loading model m.bin",
-            "loading model: 50%",
+            "loading model: [##########··········] 50%",
             "model ready in 1.2s",
             "Decoding audio…",
-            "extracting audio: 40%",
+            "extracting audio: [########············] 40%",
             "audio duration: 5.0s",
-            "transcribing: 10%",
+            "transcribing: [##··················] 10%",
             "mlx: fetching model",
             "segment [00:00 → 00:01] hi",
             "ERROR: boom",

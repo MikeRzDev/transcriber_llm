@@ -12,14 +12,16 @@ pub struct Areas {
     pub keys: Rect,
 }
 
-pub fn areas(area: Rect) -> Areas {
+/// `key_rows`: height of the key-hint bar — it wraps onto multiple rows
+/// when the window is too narrow to fit every hint on one line.
+pub fn areas(area: Rect, key_rows: u16) -> Areas {
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // header
-            Constraint::Min(3),    // body
-            Constraint::Length(1), // status
-            Constraint::Length(1), // keys
+            Constraint::Length(1),        // header
+            Constraint::Min(3),           // body
+            Constraint::Length(1),        // status
+            Constraint::Length(key_rows), // keys
         ])
         .split(area);
     let body = Layout::default()

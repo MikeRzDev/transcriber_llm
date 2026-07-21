@@ -74,7 +74,7 @@ impl TranscriptDoc<'_> {
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "transcript".into());
-        let dir = out_base.join(format!("{stem}_{}", local_timestamp()));
+        let dir = out_base.join(format!("{stem}_{}", crate::format::file_timestamp()));
         std::fs::create_dir_all(&dir)?;
         let mut written = Vec::with_capacity(formats.len());
         for format in formats {
@@ -214,22 +214,6 @@ impl TranscriptDoc<'_> {
         out.push('\n');
         out
     }
-}
-
-/// Local time as `YYYYMMDD_HHMMSS`, used to name export folders.
-fn local_timestamp() -> String {
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    let t = unsafe { libc::time(std::ptr::null_mut()) };
-    unsafe { libc::localtime_r(&t, &mut tm) };
-    format!(
-        "{:04}{:02}{:02}_{:02}{:02}{:02}",
-        tm.tm_year + 1900,
-        tm.tm_mon + 1,
-        tm.tm_mday,
-        tm.tm_hour,
-        tm.tm_min,
-        tm.tm_sec
-    )
 }
 
 /// A paragraph of merged segments, optionally attributed to a speaker.

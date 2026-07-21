@@ -15,7 +15,8 @@ pub fn clamp_transcript(app: &mut App, area: Rect) {
     if app.transcript.segments.is_empty() {
         return;
     }
-    let transcript_area = areas(area).transcript;
+    let key_rows = crate::ui::status::keys_rows(app, area.width);
+    let transcript_area = areas(area, key_rows).transcript;
     // Block borders take one cell on each side
     let inner_width = transcript_area.width.saturating_sub(2) as usize;
     let viewport = transcript_area.height.saturating_sub(2) as usize;

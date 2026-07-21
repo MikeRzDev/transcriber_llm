@@ -93,6 +93,8 @@ impl App {
                 // Right pane: transcript ⇄ job log
                 self.show_log = !self.show_log;
             }
+            KeyCode::Char('e') => self.export_log(),
+            KeyCode::Char('x') => self.clear_log(),
             KeyCode::Char('c') => {
                 if self.busy() && self.work != WorkState::UnloadingModel {
                     self.job_log.push("cancel requested");

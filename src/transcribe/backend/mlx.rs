@@ -30,15 +30,122 @@ const HEARTBEAT_EVERY: Duration = Duration::from_secs(5);
 /// …but only after this much output silence — a chatty child needs none.
 const QUIET_BEFORE_HEARTBEAT: Duration = Duration::from_secs(3);
 
-/// mlx-audio is nearly silent by default: with a local model there is no
-/// download chatter and generation prints nothing until the end. This
-/// -c shim switches Python's `logging` to INFO before handing control to
-/// the generate module (exactly what `-m` would run), so every internal
-/// log record the libraries emit reaches our stderr stream.
-const PY_LOGGING_SHIM: &str = "import logging, runpy, sys; \
-logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(name)s: %(message)s'); \
-sys.argv = ['mlx_audio.stt.generate'] + sys.argv[1:]; \
-runpy.run_module('mlx_audio.stt.generate', run_name='__main__')";
+/// Instrumented runner: instead of only reading what the stock CLI
+/// happens to print, this script drives mlx-audio's Python API directly
+/// and reports every internal stage — interpreter up, mlx import, model
+/// load (timed separately), generation (with `verbose=True`, which makes
+/// whisper-family models print each decoded segment live, plus token
+/// stats and peak memory), and save. Any import/API drift in a future
+/// mlx-audio version falls back to the stock CLI so jobs keep working.
+///
+/// `import mlx_audio.stt.models` must come first: generate.py sits in an
+/// import cycle with the models package (glmasr imports back into it),
+/// and only the models-first order lets the cycle complete — the same
+/// order `-m mlx_audio.stt.generate` produces implicitly.
+const PY_RUNNER: &str = r#"
+import logging
+import sys
+import time
+
+T0 = time.time()
+
+def mark(msg):
+    print(f"[stage +{time.time() - T0:5.1f}s] {msg}", flush=True)
+
+logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(name)s: %(message)s")
+
+flags = dict(zip(sys.argv[1::2], sys.argv[2::2]))
+
+def _install_tqdm_probe():
+    # Model implementations track their decode loops with tqdm (whisper:
+    # frames, parakeet: chunks, …) but disable or bury the bar depending
+    # on verbosity. Replacing tqdm with this subclass surfaces every
+    # update as a machine-readable "@@pct N" line — the host turns those
+    # into its real progress gauge — regardless of the disable flag.
+    # Must run BEFORE mlx_audio imports (`from tqdm import tqdm` binds).
+    try:
+        import tqdm as _tqdm_mod
+    except ImportError:
+        return
+    _real = _tqdm_mod.tqdm
+
+    class ProbeTqdm(_real):
+        def __init__(self, *args, **kwargs):
+            self._probe_total = kwargs.get("total")
+            if self._probe_total is None and args:
+                self._probe_total = getattr(args[0], "__len__", lambda: None)()
+            self._probe_n = 0
+            self._probe_last = -1
+            kwargs["disable"] = True  # we report; no raw bar spam
+            super().__init__(*args, **kwargs)
+
+        def _probe_emit(self):
+            if not self._probe_total:
+                return
+            pct = min(100, int(self._probe_n * 100 / self._probe_total))
+            if pct != self._probe_last:
+                self._probe_last = pct
+                print(f"@@pct {pct}", flush=True)
+
+        def update(self, n=1):
+            self._probe_n += n or 0
+            self._probe_emit()
+            return super().update(n)
+
+        def __iter__(self):
+            for item in super().__iter__():
+                yield item
+                self._probe_n += 1
+                self._probe_emit()
+
+    _tqdm_mod.tqdm = ProbeTqdm
+    for name in ("tqdm.auto", "tqdm.std"):
+        mod = sys.modules.get(name)
+        if mod is not None:
+            mod.tqdm = ProbeTqdm
+
+def run_instrumented():
+    import platform
+    mark(f"python {platform.python_version()} up · importing mlx-audio (loads Metal)…")
+    import mlx_audio.stt.models  # first: completes generate.py's import cycle
+    from mlx_audio.stt.generate import generate_transcription
+    from mlx_audio.stt.utils import load_model
+    import mlx.core as mx
+    mark(f"mlx-audio imported in {time.time() - T0:.1f}s")
+
+    t = time.time()
+    mark(f"loading model {flags['--model']}…")
+    model = load_model(flags["--model"])
+    mark(f"model loaded in {time.time() - t:.1f}s")
+
+    kwargs = {}
+    if "--language" in flags:
+        kwargs["language"] = flags["--language"]
+    t = time.time()
+    mark("transcribing…")
+    generate_transcription(
+        model=model,
+        audio=flags["--audio"],
+        output_path=flags["--output-path"],
+        format=flags.get("--format", "json"),
+        verbose=True,
+        **kwargs,
+    )
+    mark(
+        f"transcription + save done in {time.time() - t:.1f}s"
+        f" · peak memory {mx.get_peak_memory() / 1e9:.2f} GB"
+    )
+
+# ---- execution ----
+_install_tqdm_probe()
+try:
+    run_instrumented()
+except (ImportError, AttributeError, KeyError, TypeError) as e:
+    mark(f"instrumented path failed ({type(e).__name__}: {e}); falling back to stock CLI")
+    import runpy
+    sys.argv = ["mlx_audio.stt.generate"] + sys.argv[1:]
+    runpy.run_module("mlx_audio.stt.generate", run_name="__main__")
+"#;
 
 /// Python interpreters probed, in order — both for an existing
 /// mlx_audio install and as the base interpreter for creating the
@@ -262,6 +369,15 @@ fn emit_line(line: &[u8], log: &Option<Sender<Event>>, last_sent: &mut String) -
         return false;
     }
     last_sent.clone_from(&text);
+    // "@@pct N" comes from the runner's tqdm probe inside the model's
+    // decode loop — it drives the real progress gauge, not the log
+    if let Some(pct) = text
+        .strip_prefix("@@pct ")
+        .and_then(|p| p.trim().parse::<i32>().ok())
+    {
+        let _ = log.send(Event::Progress(pct.clamp(0, 100)));
+        return true;
+    }
     let _ = log.send(Event::EngineLog(text));
     true
 }
@@ -418,11 +534,11 @@ impl Engine for MlxEngine {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
+        std::fs::write(&scratch.runner, PY_RUNNER)?;
         let started = Instant::now();
         let mut cmd = Command::new(&python);
-        // PY_LOGGING_SHIM ≙ `-m mlx_audio.stt.generate`, with Python's
-        // INFO logging switched on so internals reach the job log.
-        cmd.args(["-c", PY_LOGGING_SHIM, "--model"])
+        cmd.arg(&scratch.runner)
+            .arg("--model")
             .arg(&job.model)
             .arg("--audio")
             .arg(&scratch.wav)
@@ -437,7 +553,7 @@ impl Engine for MlxEngine {
         // mlx imports silently for several seconds before the first line
         // of child output — say so instead of appearing stalled
         let _ = events.send(Event::EngineLog(format!(
-            "spawning mlx_audio.stt.generate · model {model_name} (loads per job)"
+            "spawning instrumented mlx-audio runner · model {model_name} (loads per job)"
         )));
         // run_cancellable streams the child's chatter into the status
         // line as a live log and kills the child on cancel.
@@ -478,11 +594,13 @@ impl Engine for MlxEngine {
     fn unload(&mut self) {}
 }
 
-/// Temp files for one job: the input WAV plus mlx-audio's output (it
-/// appends `.json` — or `.txt` when a model yields no segments — to the
-/// base path we pass). Removed on drop, so every exit path cleans up.
+/// Temp files for one job: the input WAV, the instrumented runner
+/// script, plus mlx-audio's output (it appends `.json` — or `.txt` when
+/// a model yields no segments — to the base path we pass). Removed on
+/// drop, so every exit path cleans up.
 struct Scratch {
     wav: PathBuf,
+    runner: PathBuf,
     out_base: PathBuf,
 }
 
@@ -496,6 +614,7 @@ impl Scratch {
         ));
         Self {
             wav: base.with_extension("wav"),
+            runner: base.with_extension("py"),
             out_base: base,
         }
     }
@@ -523,7 +642,12 @@ impl Scratch {
 
 impl Drop for Scratch {
     fn drop(&mut self) {
-        for path in [self.wav.clone(), self.json_path(), self.txt_path()] {
+        for path in [
+            self.wav.clone(),
+            self.runner.clone(),
+            self.json_path(),
+            self.txt_path(),
+        ] {
             let _ = std::fs::remove_file(path);
         }
     }
@@ -718,6 +842,30 @@ mod tests {
         assert!(lines.contains(&"downloading 99%".to_string()));
         assert!(lines.contains(&"done".to_string()));
         assert_eq!(lines.iter().filter(|l| *l == "warn: x").count(), 1);
+    }
+
+    #[test]
+    fn pct_lines_become_progress_events_not_log_lines() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        run_cancellable(
+            Command::new("sh").args(["-c", "echo '@@pct 40'; echo '@@pct 85'; echo other"]),
+            &Arc::new(AtomicBool::new(false)),
+            Some(&tx),
+        )
+        .unwrap()
+        .expect("not cancelled");
+
+        let mut progress = Vec::new();
+        let mut logs = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                Event::Progress(p) => progress.push(p),
+                Event::EngineLog(line) => logs.push(line),
+                _ => {}
+            }
+        }
+        assert_eq!(progress, vec![40, 85]);
+        assert_eq!(logs, vec!["other"]);
     }
 
     #[test]

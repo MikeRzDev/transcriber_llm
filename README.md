@@ -73,6 +73,8 @@ Drop any audio or video file from Finder onto the terminal window and the start-
 | `s` | Settings: default model, models & output folders (via a built-in directory browser), export formats, model management, diarization, split mode, language (persisted) |
 | `d` | Toggle speaker diarization for the next transcription |
 | `l` | Toggle the right pane between the **job log** (the default view) and the transcript. The log is a timestamped record of everything since the first file was loaded: file selection, model load, audio extraction, engine output, every segment, exports, errors (10k-line ring buffer, virtualized rendering, `j k`/`g`/`G` scroll with live follow) |
+| `e` | Export the job log to `<output folder>/logs/log_<YYYYMMDD_HHMMSS>.log` — works at any time, including mid-job |
+| `x` | Clear the job log |
 | `c` | Cancel the running transcription (shown in the key bar only while a job is running) |
 | `↑↓` / `j k`, `PgUp/PgDn`, `g`/`G` | Navigate / scroll (G re-enables follow) |
 | `q` / `Ctrl-C` | Quit |
