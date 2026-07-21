@@ -1,4 +1,5 @@
 use anyhow::Result;
+use clap::Parser;
 
 fn main() {
     let code = match real_main() {
@@ -19,6 +20,8 @@ fn main() {
 }
 
 fn real_main() -> Result<()> {
-    let args = transcribe_stt::cli::parse_args()?;
+    // Parsed at the process edge: clap prints help/usage errors and exits
+    // before any whisper/Metal state exists.
+    let args = transcribe_stt::cli::Args::parse();
     transcribe_stt::run(args)
 }

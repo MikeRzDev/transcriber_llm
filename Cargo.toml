@@ -5,6 +5,7 @@ edition = "2021"
 description = "Terminal speech-to-text client for whisper.cpp voice models with Metal acceleration"
 
 [dependencies]
+clap = { version = "4.5", features = ["derive"] }
 whisper-rs = { version = "0.16", features = ["metal", "log_backend"] }
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["bracketed-paste"] }
