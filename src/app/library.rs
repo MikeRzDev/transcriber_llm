@@ -1,11 +1,48 @@
 //! Local model management: scanning the models folder and keeping the
 //! default selection valid.
 
+use crossterm::event::KeyCode;
+
 use crate::app::App;
 use crate::config;
 use crate::models::{self, ModelFile};
 
 impl App {
+    /// Open the model picker preselected on the current default.
+    pub fn open_model_picker(&mut self) {
+        self.refresh_models();
+        self.model_picker_selected = self
+            .selected_model
+            .as_ref()
+            .and_then(|sel| self.models.iter().position(|m| m.path == sel.path))
+            .unwrap_or(0);
+        self.model_picker_open = true;
+    }
+
+    pub(crate) fn model_picker_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Esc | KeyCode::Char('m') | KeyCode::Char('q') => {
+                self.model_picker_open = false;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.model_picker_selected = self.model_picker_selected.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !self.models.is_empty() {
+                    self.model_picker_selected =
+                        (self.model_picker_selected + 1).min(self.models.len() - 1);
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(model) = self.models.get(self.model_picker_selected).cloned() {
+                    self.choose_model(model);
+                }
+                self.model_picker_open = false;
+            }
+            _ => {}
+        }
+    }
+
     pub fn refresh_models(&mut self) {
         self.models = models::scan_models(&self.models_dir);
         self.model_picker_selected = self

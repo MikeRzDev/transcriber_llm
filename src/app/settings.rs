@@ -106,6 +106,48 @@ pub struct MovePrompt {
 }
 
 impl App {
+    pub(crate) fn settings_key(&mut self, code: KeyCode) {
+        if let Some(input) = &mut self.language_input {
+            match code {
+                KeyCode::Char(c) => input.push(c),
+                KeyCode::Backspace => {
+                    input.pop();
+                }
+                KeyCode::Enter => {
+                    let text = self.language_input.take().unwrap_or_default();
+                    self.set_language(&text);
+                }
+                KeyCode::Esc => self.language_input = None,
+                _ => {}
+            }
+            return;
+        }
+        match code {
+            KeyCode::Esc | KeyCode::Char('s') | KeyCode::Char('q') => {
+                self.settings_open = false;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.settings_selected = self.settings_selected.checked_sub(1).unwrap_or(6);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.settings_selected = (self.settings_selected + 1) % 7;
+            }
+            KeyCode::Enter => match self.settings_selected {
+                0 => self.open_model_picker(),
+                1 => self.open_dir_picker(DirTarget::Models),
+                2 => self.open_dir_picker(DirTarget::Output),
+                3 => {
+                    self.settings_open = false;
+                    self.open_hub();
+                }
+                4 => self.toggle_diarize(),
+                5 => self.cycle_split_mode(),
+                _ => self.language_input = Some(self.config.language.clone().unwrap_or_default()),
+            },
+            _ => {}
+        }
+    }
+
     /// Toggle diarization and persist the choice.
     pub fn toggle_diarize(&mut self) {
         self.diarize = !self.diarize;

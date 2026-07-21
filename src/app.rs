@@ -6,11 +6,13 @@ mod browser;
 mod drop;
 mod events;
 mod hub_state;
+mod keys;
 mod library;
 mod settings;
 
 pub use browser::FileEntry;
 pub(crate) use browser::file_name;
+pub use drop::DropDetector;
 pub use hub_state::HubState;
 pub use settings::{DirPicker, DirRow, DirTarget, MovePrompt};
 

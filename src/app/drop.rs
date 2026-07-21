@@ -2,10 +2,79 @@
 //! in several shapes (quoted, backslash-escaped, file:// URLs).
 
 use std::path::PathBuf;
+use std::time::Instant;
 
 use crate::app::browser::file_name;
 use crate::app::{App, Focus};
 use crate::audio;
+
+/// A drop-burst continues while consecutive chars arrive this quickly.
+const BURST_CONTINUE_MS: u128 = 150;
+/// A quiet period this long ends the burst and flushes it as a path.
+const BURST_FLUSH_MS: u128 = 250;
+/// Flushed bursts must be longer than this to count as a dropped path
+/// (filters out someone just typing '/' or '~' then pausing).
+const MIN_DROP_LEN: usize = 2;
+
+/// Fallback drop detection for terminals without bracketed paste: a
+/// dropped file arrives as a rapid burst of key events starting with
+/// '/' or '~'. The caller decides when feeding is allowed (not while a
+/// modal captures typing, no CONTROL modifier).
+pub struct DropDetector {
+    buf: String,
+    last_char: Instant,
+}
+
+impl DropDetector {
+    pub fn new() -> Self {
+        Self {
+            buf: String::new(),
+            last_char: Instant::now(),
+        }
+    }
+
+    /// Offer a printable char; true when it was consumed by a burst.
+    pub fn feed_char(&mut self, c: char) -> bool {
+        let burst_continues =
+            !self.buf.is_empty() && self.last_char.elapsed().as_millis() < BURST_CONTINUE_MS;
+        let burst_starts = self.buf.is_empty() && (c == '/' || c == '~');
+        if burst_continues || burst_starts {
+            self.buf.push(c);
+            self.last_char = Instant::now();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Offer an Enter key; Some(text) when it terminates a live burst
+    /// (some terminals end a drop with a newline).
+    pub fn feed_enter(&mut self) -> Option<String> {
+        if !self.buf.is_empty() && self.last_char.elapsed().as_millis() < BURST_CONTINUE_MS {
+            Some(std::mem::take(&mut self.buf))
+        } else {
+            None
+        }
+    }
+
+    /// Call once per frame: a quiet period ends the burst. Discards
+    /// too-short bursts instead of returning them.
+    pub fn poll(&mut self) -> Option<String> {
+        if !self.buf.is_empty() && self.last_char.elapsed().as_millis() > BURST_FLUSH_MS {
+            let text = std::mem::take(&mut self.buf);
+            if text.len() > MIN_DROP_LEN {
+                return Some(text);
+            }
+        }
+        None
+    }
+}
+
+impl Default for DropDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl App {
     /// Handle a path dropped onto the terminal window (arrives as pasted
@@ -94,6 +163,58 @@ fn percent_decode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn burst_starts_only_on_path_chars() {
+        let mut d = DropDetector::new();
+        assert!(!d.feed_char('a'));
+        assert!(!d.feed_char('x'));
+        assert!(d.feed_char('/'));
+        // once started, any char continues the burst
+        assert!(d.feed_char('t'));
+        assert!(d.feed_char('m'));
+        assert!(d.feed_char('p'));
+    }
+
+    #[test]
+    fn enter_terminates_a_live_burst() {
+        let mut d = DropDetector::new();
+        assert_eq!(d.feed_enter(), None);
+        for c in "/tmp/a.wav".chars() {
+            assert!(d.feed_char(c));
+        }
+        assert_eq!(d.feed_enter().as_deref(), Some("/tmp/a.wav"));
+        // the burst is consumed
+        assert_eq!(d.feed_enter(), None);
+    }
+
+    #[test]
+    fn quiet_period_flushes_and_short_bursts_are_discarded() {
+        let mut d = DropDetector::new();
+        assert!(d.feed_char('/'));
+        // too fresh to flush
+        assert_eq!(d.poll(), None);
+        std::thread::sleep(Duration::from_millis(BURST_FLUSH_MS as u64 + 60));
+        // a bare '/' is below MIN_DROP_LEN: dropped, not returned
+        assert_eq!(d.poll(), None);
+        assert_eq!(d.feed_enter(), None);
+
+        for c in "/tmp/a.wav".chars() {
+            assert!(d.feed_char(c));
+        }
+        std::thread::sleep(Duration::from_millis(BURST_FLUSH_MS as u64 + 60));
+        assert_eq!(d.poll().as_deref(), Some("/tmp/a.wav"));
+    }
+
+    #[test]
+    fn stale_burst_does_not_claim_enter() {
+        let mut d = DropDetector::new();
+        assert!(d.feed_char('/'));
+        assert!(d.feed_char('x'));
+        std::thread::sleep(Duration::from_millis(BURST_CONTINUE_MS as u64 + 60));
+        assert_eq!(d.feed_enter(), None);
+    }
 
     #[test]
     fn plain_absolute_path() {
