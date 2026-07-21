@@ -1,0 +1,15 @@
+# build artifacts
+/target/
+
+# macOS noise
+.DS_Store
+
+# local Claude Code state
+.claude/
+
+# model weights and test media — multi-GB, fetched via the app
+/models/
+/samples/
+
+# in-flight downloads
+*.part
