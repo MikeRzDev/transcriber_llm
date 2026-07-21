@@ -158,14 +158,15 @@ pub fn load() -> Config {
         .unwrap_or_default()
 }
 
-pub fn save(config: &Config) -> std::io::Result<()> {
+pub fn save(config: &Config) -> anyhow::Result<()> {
     let Some(path) = config_path() else {
         return Ok(());
     };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, render(config))
+    std::fs::write(path, render(config))?;
+    Ok(())
 }
 
 /// Resolution order: $TRANSCRIBE_STT_MODELS > config > platform default

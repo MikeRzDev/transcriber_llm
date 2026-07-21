@@ -381,11 +381,11 @@ impl App {
         self.status = format!("Moving {count} model(s) to {}…", to.display());
         let tx = self.hub_tx.clone();
         std::thread::spawn(move || {
-            let (moved, skipped, failed) = models::move_models(&from, &to);
+            let report = models::move_models(&from, &to);
             let _ = tx.send(HubEvent::ModelsMoved {
-                moved,
-                skipped,
-                failed,
+                moved: report.moved,
+                skipped: report.skipped,
+                failed: report.failed,
             });
         });
     }

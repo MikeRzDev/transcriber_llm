@@ -123,15 +123,18 @@ pub fn search(query: String, tx: Sender<HubEvent>) {
             "https://huggingface.co/api/models?search={}&pipeline_tag=automatic-speech-recognition&limit=25&sort=downloads&direction=-1",
             urlencode(&query)
         );
-        let result = (|| -> Result<Vec<RepoHit>, String> {
-            let resp = agent().get(&url).call().map_err(|e| e.to_string())?;
-            let v: serde_json::Value =
-                serde_json::from_reader(resp.into_reader()).map_err(|e| e.to_string())?;
+        let result = (|| -> anyhow::Result<Vec<RepoHit>> {
+            let resp = agent().get(&url).call()?;
+            let v: serde_json::Value = serde_json::from_reader(resp.into_reader())?;
             Ok(parse_search(&v))
         })();
         let _ = tx.send(match result {
             Ok(hits) => HubEvent::SearchResults { query, hits },
-            Err(error) => HubEvent::SearchFailed { query, error },
+            // Errors cross the thread boundary as display strings
+            Err(error) => HubEvent::SearchFailed {
+                query,
+                error: format!("{error:#}"),
+            },
         });
     });
 }
@@ -167,15 +170,17 @@ fn parse_search(v: &serde_json::Value) -> Vec<RepoHit> {
 pub fn list_files(repo: String, tx: Sender<HubEvent>) {
     std::thread::spawn(move || {
         let url = format!("https://huggingface.co/api/models/{repo}?blobs=true");
-        let result = (|| -> Result<Vec<HubFile>, String> {
-            let resp = agent().get(&url).call().map_err(|e| e.to_string())?;
-            let v: serde_json::Value =
-                serde_json::from_reader(resp.into_reader()).map_err(|e| e.to_string())?;
+        let result = (|| -> anyhow::Result<Vec<HubFile>> {
+            let resp = agent().get(&url).call()?;
+            let v: serde_json::Value = serde_json::from_reader(resp.into_reader())?;
             Ok(parse_files(&v))
         })();
         let _ = tx.send(match result {
             Ok(files) => HubEvent::Files { repo, files },
-            Err(error) => HubEvent::FilesFailed { repo, error },
+            Err(error) => HubEvent::FilesFailed {
+                repo,
+                error: format!("{error:#}"),
+            },
         });
     });
 }
@@ -232,11 +237,18 @@ pub fn download(
             Ok(None) => HubEvent::Cancelled { file: display },
             Err(error) => HubEvent::Failed {
                 file: display,
-                error,
+                error: format!("{error:#}"),
             },
         });
     });
 }
+
+/// Transfer buffer size.
+const STREAM_BUF_BYTES: usize = 1 << 16;
+/// Progress events fire at most once per this many bytes.
+const PROGRESS_STEP_BYTES: u64 = 2 * 1024 * 1024;
+/// Transient-error retries before giving up.
+const MAX_ATTEMPTS: u64 = 3;
 
 fn download_blocking(
     repo: &str,
@@ -245,9 +257,9 @@ fn download_blocking(
     cancel: &AtomicBool,
     display: &str,
     tx: &Sender<HubEvent>,
-) -> Result<Option<PathBuf>, String> {
-    std::fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
-    let base = dest_name(file).ok_or("bad file name")?;
+) -> anyhow::Result<Option<PathBuf>> {
+    std::fs::create_dir_all(dest_dir)?;
+    let base = dest_name(file).ok_or_else(|| anyhow::anyhow!("bad file name"))?;
     let final_path = dest_dir.join(&base);
     let part_path = dest_dir.join(format!("{base}.part"));
 
@@ -260,11 +272,11 @@ fn download_blocking(
         match agent().get(&url).call() {
             Ok(resp) => break resp,
             Err(ureq::Error::Status(code, _)) if code < 500 => {
-                return Err(format!("status code {code} for {url}"));
+                anyhow::bail!("status code {code} for {url}");
             }
             Err(e) => {
-                if attempt >= 3 || cancel.load(Ordering::Relaxed) {
-                    return Err(e.to_string());
+                if attempt >= MAX_ATTEMPTS || cancel.load(Ordering::Relaxed) {
+                    return Err(e.into());
                 }
                 std::thread::sleep(Duration::from_secs(2 * attempt));
             }
@@ -276,8 +288,8 @@ fn download_blocking(
         .unwrap_or(0);
 
     let mut reader = resp.into_reader();
-    let mut out = std::fs::File::create(&part_path).map_err(|e| e.to_string())?;
-    let mut buf = [0u8; 1 << 16];
+    let mut out = std::fs::File::create(&part_path)?;
+    let mut buf = [0u8; STREAM_BUF_BYTES];
     let mut got: u64 = 0;
     let mut last_report: u64 = 0;
     loop {
@@ -286,13 +298,13 @@ fn download_blocking(
             let _ = std::fs::remove_file(&part_path);
             return Ok(None);
         }
-        let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
+        let n = reader.read(&mut buf)?;
         if n == 0 {
             break;
         }
-        out.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        out.write_all(&buf[..n])?;
         got += n as u64;
-        if got - last_report >= 2 * 1024 * 1024 {
+        if got - last_report >= PROGRESS_STEP_BYTES {
             last_report = got;
             let _ = tx.send(HubEvent::Progress {
                 file: display.to_string(),
@@ -301,13 +313,13 @@ fn download_blocking(
             });
         }
     }
-    out.flush().map_err(|e| e.to_string())?;
+    out.flush()?;
     drop(out);
     if total > 0 && got < total {
         let _ = std::fs::remove_file(&part_path);
-        return Err(format!("connection closed early ({got} of {total} bytes)"));
+        anyhow::bail!("connection closed early ({got} of {total} bytes)");
     }
-    std::fs::rename(&part_path, &final_path).map_err(|e| e.to_string())?;
+    std::fs::rename(&part_path, &final_path)?;
     Ok(Some(final_path))
 }
 

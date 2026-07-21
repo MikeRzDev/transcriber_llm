@@ -41,14 +41,26 @@ pub fn is_model_file(path: &Path) -> bool {
     )
 }
 
+/// Outcome of a bulk model move — a domain result, not an error: any
+/// mix of moved/skipped/failed is a legitimate answer to report.
+pub struct MoveReport {
+    pub moved: usize,
+    pub skipped: usize,
+    pub failed: usize,
+}
+
 /// Move every supported model from one folder to another, skipping files
-/// that already exist at the destination. Returns (moved, skipped, failed).
-pub fn move_models(from: &Path, to: &Path) -> (usize, usize, usize) {
-    let (mut moved, mut skipped, mut failed) = (0, 0, 0);
+/// that already exist at the destination.
+pub fn move_models(from: &Path, to: &Path) -> MoveReport {
+    let mut report = MoveReport {
+        moved: 0,
+        skipped: 0,
+        failed: 0,
+    };
     for model in scan_models(from) {
         let dest = to.join(&model.name);
         if dest.exists() {
-            skipped += 1;
+            report.skipped += 1;
             continue;
         }
         let result = std::fs::rename(&model.path, &dest).or_else(|_| {
@@ -62,11 +74,11 @@ pub fn move_models(from: &Path, to: &Path) -> (usize, usize, usize) {
                 })
         });
         match result {
-            Ok(()) => moved += 1,
-            Err(_) => failed += 1,
+            Ok(()) => report.moved += 1,
+            Err(_) => report.failed += 1,
         }
     }
-    (moved, skipped, failed)
+    report
 }
 
 pub fn scan_models(dir: &Path) -> Vec<ModelFile> {
