@@ -1,19 +1,30 @@
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+//! Application state and update logic. `App` owns the sub-state for each
+//! UI concern; the per-concern logic lives in the submodules below, and
+//! `ui` renders it all read-only.
+
+mod browser;
+mod drop;
+mod events;
+mod hub_state;
+mod library;
+mod settings;
+
+pub use browser::FileEntry;
+pub(crate) use browser::file_name;
+pub use hub_state::HubState;
+pub use settings::{DirPicker, DirRow, DirTarget, MovePrompt};
+
+use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossterm::event::KeyCode;
 
-use crate::audio;
 use crate::config::{self, Config};
 use crate::export::TranscriptDoc;
-use crate::hub::{self, HubEvent, HubFile, RepoHit, SuggestedModel};
+use crate::hub::HubEvent;
 use crate::models::{self, ModelFile};
 use crate::stats::ProcStats;
-use crate::transcribe::{Event, Job, Segment, Transcriber};
+use crate::transcribe::{Job, Segment, Transcriber};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
@@ -29,171 +40,6 @@ pub enum WorkState {
     UnloadingModel,
     Decoding,
     Transcribing { progress: i32 },
-}
-
-pub enum FileEntry {
-    Parent,
-    Dir(PathBuf),
-    Media(PathBuf),
-}
-
-impl FileEntry {
-    pub fn label(&self) -> String {
-        match self {
-            FileEntry::Parent => "../".into(),
-            FileEntry::Dir(p) => format!("{}/", file_name(p)),
-            FileEntry::Media(p) => {
-                if audio::is_video_file(p) {
-                    format!("{} ⧉", file_name(p))
-                } else {
-                    file_name(p)
-                }
-            }
-        }
-    }
-}
-
-fn file_name(p: &Path) -> String {
-    p.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| p.display().to_string())
-}
-
-/// Which folder setting a DirPicker session is choosing for.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum DirTarget {
-    Models,
-    Output,
-}
-
-impl DirTarget {
-    pub fn label(&self) -> &'static str {
-        match self {
-            DirTarget::Models => "models",
-            DirTarget::Output => "output",
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum DirRow {
-    UseThis,
-    Parent,
-    Sub(PathBuf),
-}
-
-/// The reusable directory browser: any setting that needs a folder opens
-/// one of these over the settings modal.
-pub struct DirPicker {
-    pub target: DirTarget,
-    pub cwd: PathBuf,
-    pub dirs: Vec<PathBuf>,
-    pub selected: usize,
-}
-
-impl DirPicker {
-    pub fn at(target: DirTarget, start: &Path) -> Self {
-        // Walk up until something exists, falling back to $HOME
-        let mut cwd = start.to_path_buf();
-        while !cwd.is_dir() {
-            match cwd.parent() {
-                Some(p) if !p.as_os_str().is_empty() => cwd = p.to_path_buf(),
-                _ => {
-                    cwd = std::env::var_os("HOME")
-                        .map(PathBuf::from)
-                        .unwrap_or_else(|| PathBuf::from("/"));
-                    break;
-                }
-            }
-        }
-        let mut picker = Self {
-            target,
-            cwd,
-            dirs: Vec::new(),
-            selected: 0,
-        };
-        picker.refresh();
-        picker
-    }
-
-    fn refresh(&mut self) {
-        self.dirs = std::fs::read_dir(&self.cwd)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|entry| {
-                let path = entry.path();
-                let hidden = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().starts_with('.'))
-                    .unwrap_or(true);
-                (path.is_dir() && !hidden).then_some(path)
-            })
-            .collect();
-        self.dirs.sort();
-        self.selected = 0;
-    }
-
-    /// The rows as displayed: pick-here first, then up, then subfolders.
-    pub fn rows(&self) -> Vec<DirRow> {
-        let mut rows = vec![DirRow::UseThis];
-        if self.cwd.parent().is_some() {
-            rows.push(DirRow::Parent);
-        }
-        rows.extend(self.dirs.iter().cloned().map(DirRow::Sub));
-        rows
-    }
-}
-
-/// Yes/No dialog offered after the models folder changes while the old
-/// folder still holds models.
-pub struct MovePrompt {
-    pub from: PathBuf,
-    pub to: PathBuf,
-    pub count: usize,
-    pub yes_selected: bool,
-}
-
-/// State of the Model management modal (search + download from Hugging Face).
-pub struct HubState {
-    pub open: bool,
-    /// Search bar contents; empty shows the suggested list
-    pub input: String,
-    pub selected: usize,
-    pub searching: bool,
-    /// Some(repo) while its file list is being fetched
-    pub listing_repo: Option<String>,
-    /// None → suggested list; Some → search results
-    pub results: Option<Vec<RepoHit>>,
-    /// Some((repo, files)) → file view of one repo
-    pub files: Option<(String, Vec<HubFile>)>,
-    pub suggested: Vec<SuggestedModel>,
-    /// Some((file, got_bytes, total_bytes)) while a download runs
-    pub download: Option<(String, u64, u64)>,
-    pub cancel: Arc<AtomicBool>,
-    /// Modal-local status/info line
-    pub info: String,
-    /// Debounce marker: search fires shortly after typing pauses
-    last_edit: Option<Instant>,
-}
-
-impl HubState {
-    fn new() -> Self {
-        Self {
-            open: false,
-            input: String::new(),
-            selected: 0,
-            searching: false,
-            listing_repo: None,
-            results: None,
-            files: None,
-            suggested: hub::suggested_models(),
-            download: None,
-            cancel: Arc::new(AtomicBool::new(false)),
-            info: String::new(),
-            last_edit: None,
-        }
-    }
 }
 
 pub struct App {
@@ -312,289 +158,6 @@ impl App {
         self.work != WorkState::Idle
     }
 
-    pub fn refresh_entries(&mut self) {
-        let mut dirs: Vec<PathBuf> = Vec::new();
-        let mut files: Vec<PathBuf> = Vec::new();
-        if let Ok(rd) = std::fs::read_dir(&self.cwd) {
-            for entry in rd.flatten() {
-                let path = entry.path();
-                let name = file_name(&path);
-                if name.starts_with('.') {
-                    continue;
-                }
-                if path.is_dir() {
-                    dirs.push(path);
-                } else if audio::is_media_file(&path) {
-                    files.push(path);
-                }
-            }
-        }
-        dirs.sort();
-        files.sort();
-
-        self.entries.clear();
-        if self.cwd.parent().is_some() {
-            self.entries.push(FileEntry::Parent);
-        }
-        self.entries.extend(dirs.into_iter().map(FileEntry::Dir));
-        self.entries.extend(files.into_iter().map(FileEntry::Media));
-        self.file_selected = self.file_selected.min(self.entries.len().saturating_sub(1));
-    }
-
-    pub fn refresh_models(&mut self) {
-        self.models = models::scan_models(&self.models_dir);
-        self.model_picker_selected = self
-            .model_picker_selected
-            .min(self.models.len().saturating_sub(1));
-    }
-
-    /// Toggle diarization and persist the choice.
-    pub fn toggle_diarize(&mut self) {
-        self.diarize = !self.diarize;
-        self.config.diarize = self.diarize;
-        let _ = config::save(&self.config);
-        self.status = if self.diarize {
-            match self.find_tdrz_model() {
-                Some(m) => format!("Diarization ON — conversations will use {}", m.name),
-                None => "Diarization ON, but no tdrz model found — get ggml-small.en-tdrz.bin from huggingface.co/akashmjn/tinydiarize-whisper.cpp into the models folder".into(),
-            }
-        } else {
-            "Diarization OFF".into()
-        };
-    }
-
-    /// Set the transcription language ("auto" or an ISO 639-1 code),
-    /// validated against whisper's language list, and persist it.
-    pub fn set_language(&mut self, input: &str) {
-        let code = input.trim().to_ascii_lowercase();
-        if code.is_empty() || code == "auto" {
-            self.config.language = None;
-            self.status = "Language: auto-detect".into();
-        } else if whisper_rs::get_lang_id(&code).is_some() {
-            self.config.language = Some(code.clone());
-            self.status = format!("Language set to {code} (skips auto-detection)");
-        } else {
-            self.status = format!("Unknown language code: {code} (use e.g. en, es, de, or auto)");
-            return;
-        }
-        let _ = config::save(&self.config);
-    }
-
-    /// Cycle the long-audio split strategy and persist it.
-    pub fn cycle_split_mode(&mut self) {
-        self.config.split_mode = self.config.split_mode.next();
-        let _ = config::save(&self.config);
-        self.status = format!("Split mode: {}", self.config.split_mode.label());
-    }
-
-    pub fn find_tdrz_model(&self) -> Option<ModelFile> {
-        self.models
-            .iter()
-            .find(|m| models::is_tdrz(&m.name))
-            .cloned()
-    }
-
-    /// Set a new default model and persist it. Models load lazily: the
-    /// selection here is metadata only, and switching away from a loaded
-    /// model releases its memory right away instead of at the next job.
-    pub fn choose_model(&mut self, model: ModelFile) {
-        let changed = self
-            .selected_model
-            .as_ref()
-            .map(|m| m.path != model.path)
-            .unwrap_or(true);
-        if changed {
-            self.transcriber.request_unload();
-        }
-        self.config.default_model = Some(model.name.clone());
-        self.status = format!(
-            "Selected {} (default) — loads when the next transcription starts",
-            model.name
-        );
-        self.selected_model = Some(model);
-        if let Err(e) = config::save(&self.config) {
-            self.status = format!("Model selected, but saving config failed: {e}");
-        }
-    }
-
-    /// Change the models folder, persist it, and rescan. If the previous
-    /// folder still holds models, offer to move them over.
-    pub fn set_models_dir_path(&mut self, path: PathBuf) {
-        if let Err(e) = std::fs::create_dir_all(&path) {
-            self.status = format!("Cannot use folder {}: {e}", path.display());
-            return;
-        }
-        let old_dir = self.models_dir.clone();
-        let old_count = self.models.len();
-        let path = path.canonicalize().unwrap_or(path);
-        self.models_dir = path.clone();
-        self.config.models_dir = Some(path);
-        // Scan the new folder: every supported model inside joins the list
-        self.refresh_models();
-        self.adopt_selection();
-        if let Err(e) = config::save(&self.config) {
-            self.status = format!("Saving config failed: {e}");
-        } else {
-            self.status = format!(
-                "Models folder set to {} — {} model(s) found",
-                self.models_dir.display(),
-                self.models.len()
-            );
-        }
-        if old_dir != self.models_dir && old_count > 0 {
-            self.move_prompt = Some(MovePrompt {
-                from: old_dir,
-                to: self.models_dir.clone(),
-                count: old_count,
-                yes_selected: true,
-            });
-        }
-    }
-
-    /// Keep a still-valid selection; otherwise adopt what the folder has
-    /// (configured default first, then large-v3, then whatever exists).
-    fn adopt_selection(&mut self) {
-        let selection_gone = self
-            .selected_model
-            .as_ref()
-            .map(|m| !m.path.exists())
-            .unwrap_or(true);
-        if selection_gone {
-            self.selected_model =
-                models::pick_default(&self.models, self.config.default_model.as_deref()).cloned();
-        }
-    }
-
-    pub fn move_prompt_key(&mut self, code: KeyCode) {
-        let Some(prompt) = &mut self.move_prompt else {
-            return;
-        };
-        match code {
-            KeyCode::Esc | KeyCode::Char('n') => {
-                self.move_prompt = None;
-                self.status = "Models left in the previous folder".into();
-            }
-            KeyCode::Left
-            | KeyCode::Right
-            | KeyCode::Tab
-            | KeyCode::Char('h')
-            | KeyCode::Char('l') => prompt.yes_selected = !prompt.yes_selected,
-            KeyCode::Char('y') => {
-                let prompt = self.move_prompt.take().unwrap();
-                self.start_move_models(prompt.from, prompt.to, prompt.count);
-            }
-            KeyCode::Enter => {
-                let prompt = self.move_prompt.take().unwrap();
-                if prompt.yes_selected {
-                    self.start_move_models(prompt.from, prompt.to, prompt.count);
-                } else {
-                    self.status = "Models left in the previous folder".into();
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Move the models on a worker thread — same-volume moves are instant
-    /// renames, but cross-volume copies of multi-GB files must not freeze
-    /// the render loop. Completion arrives as HubEvent::ModelsMoved.
-    fn start_move_models(&mut self, from: PathBuf, to: PathBuf, count: usize) {
-        self.status = format!("Moving {count} model(s) to {}…", to.display());
-        let tx = self.hub_tx.clone();
-        std::thread::spawn(move || {
-            let (moved, skipped, failed) = models::move_models(&from, &to);
-            let _ = tx.send(HubEvent::ModelsMoved {
-                moved,
-                skipped,
-                failed,
-            });
-        });
-    }
-
-    /// Change the export output folder and persist it.
-    pub fn set_output_dir_path(&mut self, path: PathBuf) {
-        if let Err(e) = std::fs::create_dir_all(&path) {
-            self.status = format!("Cannot use folder {}: {e}", path.display());
-            return;
-        }
-        let path = path.canonicalize().unwrap_or(path);
-        self.output_dir = path.clone();
-        self.config.output_dir = Some(path);
-        if let Err(e) = config::save(&self.config) {
-            self.status = format!("Saving config failed: {e}");
-        } else {
-            self.status = format!("Output folder set to {}", self.output_dir.display());
-        }
-    }
-
-    pub fn open_dir_picker(&mut self, target: DirTarget) {
-        let start = match target {
-            DirTarget::Models => self.models_dir.clone(),
-            DirTarget::Output => self.output_dir.clone(),
-        };
-        self.dir_picker = Some(DirPicker::at(target, &start));
-    }
-
-    pub fn dir_picker_key(&mut self, code: KeyCode) {
-        let Some(picker) = &mut self.dir_picker else {
-            return;
-        };
-        match code {
-            KeyCode::Esc => self.dir_picker = None,
-            KeyCode::Up | KeyCode::Char('k') => picker.selected = picker.selected.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') => {
-                let len = picker.rows().len();
-                if len > 0 {
-                    picker.selected = (picker.selected + 1).min(len - 1);
-                }
-            }
-            KeyCode::Enter => match picker.rows().get(picker.selected).cloned() {
-                Some(DirRow::UseThis) => {
-                    let (target, dir) = (picker.target, picker.cwd.clone());
-                    self.dir_picker = None;
-                    match target {
-                        DirTarget::Models => self.set_models_dir_path(dir),
-                        DirTarget::Output => self.set_output_dir_path(dir),
-                    }
-                }
-                Some(DirRow::Parent) => {
-                    if let Some(parent) = picker.cwd.parent() {
-                        picker.cwd = parent.to_path_buf();
-                        picker.refresh();
-                    }
-                }
-                Some(DirRow::Sub(dir)) => {
-                    picker.cwd = dir;
-                    picker.refresh();
-                }
-                None => {}
-            },
-            _ => {}
-        }
-    }
-
-    pub fn enter_selected(&mut self) {
-        match self.entries.get(self.file_selected) {
-            Some(FileEntry::Parent) => {
-                if let Some(parent) = self.cwd.parent() {
-                    self.cwd = parent.to_path_buf();
-                    self.file_selected = 0;
-                    self.refresh_entries();
-                }
-            }
-            Some(FileEntry::Dir(p)) => {
-                self.cwd = p.clone();
-                self.file_selected = 0;
-                self.refresh_entries();
-            }
-            Some(FileEntry::Media(p)) => {
-                let path = p.clone();
-                self.start_transcription(path);
-            }
-            None => {}
-        }
-    }
-
     pub fn start_transcription(&mut self, audio: PathBuf) {
         // A pending unload is fine — the job queues right behind it
         if self.busy() && self.work != WorkState::UnloadingModel {
@@ -644,331 +207,6 @@ impl App {
         });
     }
 
-    pub fn handle_event(&mut self, event: Event) {
-        match event {
-            Event::LoadingModel(name) => {
-                self.status = format!("Loading {name} (Metal)…");
-                self.work = WorkState::LoadingModel { name, progress: 0 };
-            }
-            Event::LoadProgress(p) => {
-                if let WorkState::LoadingModel { progress, .. } = &mut self.work {
-                    *progress = p;
-                }
-            }
-            Event::ModelReady { load_secs } => {
-                self.status = format!("Model loaded in {load_secs:.1}s");
-            }
-            Event::Unloading => {
-                self.work = WorkState::UnloadingModel;
-                self.status = "Releasing model memory…".into();
-            }
-            Event::Unloaded => {
-                self.work = WorkState::Idle;
-                self.status = "Model unloaded — memory freed".into();
-            }
-            Event::Decoding => {
-                self.work = WorkState::Decoding;
-                self.status = "Decoding audio…".into();
-            }
-            Event::AudioInfo { duration_secs } => {
-                self.audio_duration = Some(duration_secs);
-                self.work = WorkState::Transcribing { progress: 0 };
-                self.status = format!("Transcribing {duration_secs:.0}s of audio…");
-            }
-            Event::Progress(p) => {
-                if let WorkState::Transcribing { progress } = &mut self.work {
-                    *progress = p;
-                }
-            }
-            Event::Segment(seg) => {
-                self.segments.push(seg);
-            }
-            Event::SegmentsFinal(segments) => {
-                self.segments = segments;
-            }
-            Event::Done {
-                elapsed_secs,
-                audio_secs,
-                language,
-            } => {
-                self.work = WorkState::Idle;
-                let rtf = elapsed_secs / audio_secs.max(0.001);
-                let lang = language.as_deref().unwrap_or("?").to_string();
-                self.language = language;
-                let spoken = if self.segments.iter().any(|s| s.speaker.is_some()) {
-                    " · 2 speakers labeled"
-                } else {
-                    ""
-                };
-                let base =
-                    format!("Done in {elapsed_secs:.1}s ({rtf:.2}× realtime, lang: {lang}{spoken})");
-                // Exports run automatically after every successful transcription
-                self.status = if self.segments.is_empty() {
-                    format!("{base} — no speech found, nothing to export")
-                } else {
-                    match self.export() {
-                        Ok(folder) => format!("{base} — exported to {}", folder.display()),
-                        Err(e) => format!("{base} — export FAILED: {e}"),
-                    }
-                };
-            }
-            Event::Cancelled => {
-                self.work = WorkState::Idle;
-                self.status = "Cancelled".into();
-            }
-            Event::Error(msg) => {
-                self.work = WorkState::Idle;
-                self.status = format!("Error: {msg}");
-            }
-        }
-    }
-
-    // --- Model management (Hugging Face hub) ---
-
-    pub fn open_hub(&mut self) {
-        self.refresh_models();
-        self.hub.open = true;
-        self.hub.selected = 0;
-        self.hub.info.clear();
-    }
-
-    /// Called every render loop: fires the debounced search and drains
-    /// events from hub worker threads.
-    pub fn hub_pump(&mut self) {
-        if let Some(t) = self.hub.last_edit {
-            if t.elapsed() >= Duration::from_millis(450) {
-                self.hub.last_edit = None;
-                let query = self.hub.input.trim().to_string();
-                if query.len() >= 2 && self.hub.files.is_none() {
-                    self.hub.searching = true;
-                    hub::search(query, self.hub_tx.clone());
-                }
-            }
-        }
-        let events: Vec<HubEvent> = std::iter::from_fn(|| self.hub_rx.try_recv().ok()).collect();
-        for event in events {
-            self.handle_hub_event(event);
-        }
-    }
-
-    pub fn hub_key(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Esc => {
-                if self.hub.download.is_some() {
-                    self.hub.cancel.store(true, Ordering::Relaxed);
-                    self.hub.info = "Cancelling download…".into();
-                } else if self.hub.files.is_some() {
-                    self.hub.files = None;
-                    self.hub.selected = 0;
-                } else if !self.hub.input.is_empty() {
-                    self.hub.input.clear();
-                    self.hub.results = None;
-                    self.hub.searching = false;
-                    self.hub.last_edit = None;
-                    self.hub.selected = 0;
-                    self.hub.info.clear();
-                } else {
-                    self.hub.open = false;
-                }
-            }
-            KeyCode::Up => self.hub.selected = self.hub.selected.saturating_sub(1),
-            KeyCode::Down => {
-                let len = self.hub_list_len();
-                if len > 0 {
-                    self.hub.selected = (self.hub.selected + 1).min(len - 1);
-                }
-            }
-            KeyCode::Backspace if self.hub.files.is_none() => {
-                self.hub.input.pop();
-                self.hub_input_edited();
-            }
-            KeyCode::Char(c) if self.hub.files.is_none() => {
-                self.hub.input.push(c);
-                self.hub_input_edited();
-            }
-            KeyCode::Enter => self.hub_enter(),
-            _ => {}
-        }
-    }
-
-    fn hub_input_edited(&mut self) {
-        self.hub.last_edit = Some(Instant::now());
-        self.hub.selected = 0;
-        if self.hub.input.trim().is_empty() {
-            self.hub.results = None;
-            self.hub.searching = false;
-        }
-    }
-
-    fn hub_list_len(&self) -> usize {
-        if let Some((_, files)) = &self.hub.files {
-            files.len()
-        } else if let Some(results) = &self.hub.results {
-            results.len()
-        } else {
-            self.hub.suggested.len()
-        }
-    }
-
-    fn hub_enter(&mut self) {
-        if self.hub.download.is_some() {
-            self.hub.info = "A download is already running — Esc cancels it".into();
-            return;
-        }
-        // File view: download the selected file
-        if let Some((repo, files)) = &self.hub.files {
-            if let Some(f) = files.get(self.hub.selected) {
-                let (repo, file) = (repo.clone(), f.name.clone());
-                self.hub_start_download(repo, file);
-            }
-            return;
-        }
-        // Search results: open the repo's file list
-        if let Some(results) = &self.hub.results {
-            if let Some(hit) = results.get(self.hub.selected) {
-                let repo = hit.id.clone();
-                self.hub.listing_repo = Some(repo.clone());
-                self.hub.info = format!("Fetching file list for {repo}…");
-                hub::list_files(repo, self.hub_tx.clone());
-            }
-            return;
-        }
-        // Suggested list: download directly (if the format is runnable)
-        if let Some(s) = self.hub.suggested.get(self.hub.selected).cloned() {
-            if !s.supported() {
-                self.hub.info = format!(
-                    "{} is {}-format — whisper.cpp can only run GGML/GGUF models",
-                    s.name, s.format
-                );
-                return;
-            }
-            self.hub_start_download(s.repo, s.file);
-        }
-    }
-
-    fn hub_start_download(&mut self, repo: String, file: String) {
-        let Some(base) = hub::dest_name(&file) else {
-            self.hub.info = "Bad file name".into();
-            return;
-        };
-        if self.models.iter().any(|m| m.name == base) {
-            self.hub.info = format!("{base} is already in the models folder");
-            return;
-        }
-        self.hub.cancel = Arc::new(AtomicBool::new(false));
-        self.hub.download = Some((base.clone(), 0, 0));
-        self.hub.info = format!("Downloading {base}…");
-        hub::download(
-            repo,
-            file,
-            self.models_dir.clone(),
-            self.hub.cancel.clone(),
-            self.hub_tx.clone(),
-        );
-    }
-
-    fn handle_hub_event(&mut self, event: HubEvent) {
-        match event {
-            HubEvent::SearchResults { query, hits } => {
-                self.hub.searching = false;
-                // Drop stale results the input has moved past
-                if query == self.hub.input.trim() {
-                    self.hub.info = if hits.is_empty() {
-                        format!("No repos match '{query}'")
-                    } else {
-                        String::new()
-                    };
-                    self.hub.results = Some(hits);
-                    self.hub.selected = 0;
-                }
-            }
-            HubEvent::SearchFailed { query, error } => {
-                self.hub.searching = false;
-                self.hub.info = format!("Search '{query}' failed: {error}");
-            }
-            HubEvent::Files { repo, files } => {
-                if self.hub.listing_repo.as_deref() == Some(repo.as_str()) {
-                    self.hub.listing_repo = None;
-                    if files.is_empty() {
-                        self.hub.info = format!("No GGML/GGUF files in {repo}");
-                    } else {
-                        self.hub.files = Some((repo, files));
-                        self.hub.selected = 0;
-                        self.hub.info.clear();
-                    }
-                }
-            }
-            HubEvent::FilesFailed { repo, error } => {
-                self.hub.listing_repo = None;
-                self.hub.info = format!("Listing {repo} failed: {error}");
-            }
-            HubEvent::Progress { file, got, total } => {
-                self.hub.download = Some((file, got, total));
-            }
-            HubEvent::Done { file, path } => {
-                self.hub.download = None;
-                self.refresh_models();
-                self.hub.info = format!("Downloaded {file} ✓");
-                self.status = format!("Downloaded {file} to {}", self.models_dir.display());
-                if self.selected_model.is_none() {
-                    self.selected_model = self.models.iter().find(|m| m.path == path).cloned();
-                }
-            }
-            HubEvent::Cancelled { file } => {
-                self.hub.download = None;
-                self.hub.info = format!("Cancelled {file}");
-            }
-            HubEvent::Failed { file, error } => {
-                self.hub.download = None;
-                self.hub.info = format!("Download of {file} failed: {error}");
-            }
-            HubEvent::ModelsMoved {
-                moved,
-                skipped,
-                failed,
-            } => {
-                self.refresh_models();
-                self.adopt_selection();
-                let mut parts = vec![format!(
-                    "Moved {moved} model(s) to {}",
-                    self.models_dir.display()
-                )];
-                if skipped > 0 {
-                    parts.push(format!("{skipped} already existed"));
-                }
-                if failed > 0 {
-                    parts.push(format!("{failed} FAILED"));
-                }
-                self.status = parts.join(" · ");
-            }
-        }
-    }
-
-    /// Handle a path dropped onto the terminal window (arrives as pasted
-    /// text, possibly quoted or backslash-escaped by the terminal).
-    pub fn handle_dropped_text(&mut self, text: &str) {
-        let Some(path) = parse_dropped_path(text) else {
-            self.status = "Dropped text doesn't look like a file path".into();
-            return;
-        };
-        if path.is_dir() {
-            self.cwd = path;
-            self.file_selected = 0;
-            self.refresh_entries();
-            self.focus = Focus::Files;
-            return;
-        }
-        if !path.exists() {
-            self.status = format!("Not found: {}", path.display());
-            return;
-        }
-        if !audio::is_media_file(&path) {
-            self.status = format!("Unsupported file type: {}", file_name(&path));
-            return;
-        }
-        self.start_transcription(path);
-    }
-
     /// Write every export format into `<output_dir>/<source>_<timestamp>/`
     /// and return that folder. Runs automatically after each transcription;
     /// `e` re-exports on demand.
@@ -992,123 +230,23 @@ impl App {
     }
 }
 
-/// Terminals paste dropped files as text: possibly 'single-quoted',
-/// "double-quoted", or with backslash-escaped spaces and parens.
-fn parse_dropped_path(text: &str) -> Option<PathBuf> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let unquoted = trimmed
-        .strip_prefix('\'')
-        .and_then(|s| s.strip_suffix('\''))
-        .or_else(|| trimmed.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
-        .unwrap_or(trimmed);
-
-    // Some terminals paste drops as file:// URLs with percent-encoding
-    let unescaped = if let Some(url_path) = unquoted.strip_prefix("file://") {
-        percent_decode(url_path.trim_start_matches("localhost"))
-    } else {
-        // Undo backslash escaping (e.g. "My\ File.mp4")
-        let mut plain = String::with_capacity(unquoted.len());
-        let mut chars = unquoted.chars();
-        while let Some(c) = chars.next() {
-            if c == '\\' {
-                if let Some(next) = chars.next() {
-                    plain.push(next);
-                }
-            } else {
-                plain.push(c);
-            }
-        }
-        plain
-    };
-
-    let expanded = if let Some(rest) = unescaped.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            PathBuf::from(home).join(rest)
-        } else {
-            PathBuf::from(unescaped)
-        }
-    } else {
-        PathBuf::from(unescaped)
-    };
-
-    if expanded.is_absolute() || expanded.exists() {
-        Some(expanded)
-    } else {
-        None
-    }
-}
-
-fn percent_decode(s: &str) -> String {
-    // Malformed sequences pass through unchanged; invalid UTF-8 is lossy —
-    // matching what terminals need for file:// drops.
-    percent_encoding::percent_decode_str(s)
-        .decode_utf8_lossy()
-        .into_owned()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hub::HubEvent;
     use crate::transcribe::Event;
+    use crossterm::event::KeyCode;
     use std::path::PathBuf;
+    use std::sync::Mutex;
+    use std::time::Duration;
 
-    #[test]
-    fn plain_absolute_path() {
-        assert_eq!(
-            parse_dropped_path("/tmp/file.mp4"),
-            Some(PathBuf::from("/tmp/file.mp4"))
-        );
-    }
+    /// Serializes tests that point TRANSCRIBE_STT_CONFIG at their tempdir:
+    /// the variable is process-global, so concurrent setters would make one
+    /// test's config::save land in another test's (soon-deleted) folder.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    #[test]
-    fn backslash_escaped_spaces() {
-        assert_eq!(
-            parse_dropped_path("/tmp/my\\ file\\ (1).mp4 "),
-            Some(PathBuf::from("/tmp/my file (1).mp4"))
-        );
-    }
-
-    #[test]
-    fn quoted_paths() {
-        assert_eq!(
-            parse_dropped_path("'/tmp/my file.mp4'"),
-            Some(PathBuf::from("/tmp/my file.mp4"))
-        );
-        assert_eq!(
-            parse_dropped_path("\"/tmp/a.wav\""),
-            Some(PathBuf::from("/tmp/a.wav"))
-        );
-    }
-
-    #[test]
-    fn tilde_expansion() {
-        let home = std::env::var("HOME").unwrap();
-        assert_eq!(
-            parse_dropped_path("~/x.wav"),
-            Some(PathBuf::from(home).join("x.wav"))
-        );
-    }
-
-    #[test]
-    fn rejects_non_paths() {
-        assert_eq!(parse_dropped_path(""), None);
-        assert_eq!(parse_dropped_path("   "), None);
-        assert_eq!(parse_dropped_path("hello world"), None);
-    }
-
-    #[test]
-    fn file_url_with_percent_encoding() {
-        assert_eq!(
-            parse_dropped_path("file:///tmp/my%20file.mp4"),
-            Some(PathBuf::from("/tmp/my file.mp4"))
-        );
-        assert_eq!(
-            parse_dropped_path("file://localhost/tmp/a.wav"),
-            Some(PathBuf::from("/tmp/a.wav"))
-        );
+    fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn tempdir() -> PathBuf {
@@ -1329,6 +467,7 @@ mod tests {
 
     #[test]
     fn dir_picker_navigates_and_commits_both_targets() {
+        let _guard = lock_env();
         let dir = tempdir();
         // keep config::save away from the user's real config file
         std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
@@ -1368,6 +507,7 @@ mod tests {
 
     #[test]
     fn setting_models_folder_adopts_existing_models() {
+        let _guard = lock_env();
         let dir = tempdir();
         std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
         let folder = dir.join("stash");
@@ -1393,6 +533,7 @@ mod tests {
 
     #[test]
     fn changing_models_folder_offers_to_move_and_moves_on_yes() {
+        let _guard = lock_env();
         let dir = tempdir();
         std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
         let old = dir.join("old");
@@ -1432,6 +573,7 @@ mod tests {
 
     #[test]
     fn move_prompt_no_leaves_models_in_place() {
+        let _guard = lock_env();
         let dir = tempdir();
         std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
         let old = dir.join("old");
@@ -1488,6 +630,7 @@ mod tests {
 
     #[test]
     fn choosing_a_model_is_metadata_only_and_persists_the_default() {
+        let _guard = lock_env();
         let dir = tempdir();
         std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
         let mut app = test_app(dir.clone());
@@ -1512,6 +655,7 @@ mod tests {
 
     #[test]
     fn split_mode_cycles_and_lands_in_the_job() {
+        let _guard = lock_env();
         let dir = tempdir();
         std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
         let mut app = test_app(dir.clone());
