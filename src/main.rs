@@ -1,14 +1,3 @@
-mod app;
-mod audio;
-mod config;
-mod export;
-mod hub;
-mod models;
-mod split;
-mod stats;
-mod transcribe;
-mod ui;
-
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::time::Duration;
@@ -19,8 +8,9 @@ use crossterm::event::{
     KeyModifiers,
 };
 
-use app::{App, DirTarget, Focus};
-use transcribe::{Event, Job};
+use transcribe_stt::app::{self, App, DirTarget, Focus};
+use transcribe_stt::transcribe::{Event, Job};
+use transcribe_stt::{config, export, hub, models, split, transcribe, ui};
 
 struct Args {
     path: Option<PathBuf>,
