@@ -1055,24 +1055,11 @@ fn parse_dropped_path(text: &str) -> Option<PathBuf> {
 }
 
 fn percent_decode(s: &str) -> String {
-    fn hex(b: u8) -> Option<u8> {
-        (b as char).to_digit(16).map(|d| d as u8)
-    }
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
-                out.push(hi * 16 + lo);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    // Malformed sequences pass through unchanged; invalid UTF-8 is lossy —
+    // matching what terminals need for file:// drops.
+    percent_encoding::percent_decode_str(s)
+        .decode_utf8_lossy()
+        .into_owned()
 }
 
 #[cfg(test)]

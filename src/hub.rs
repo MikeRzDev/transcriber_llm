@@ -9,18 +9,28 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde::Deserialize;
+
 use crate::models::is_model_file;
 
 const SUGGESTED_JSON: &str = include_str!("../assets/suggested_models.json");
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct SuggestedModel {
     pub name: String,
     pub repo: String,
+    #[serde(default)]
     pub file: String,
+    #[serde(default)]
     pub size: String,
+    #[serde(default = "default_format")]
     pub format: String,
+    #[serde(default)]
     pub note: String,
+}
+
+fn default_format() -> String {
+    "ggml".into()
 }
 
 impl SuggestedModel {
@@ -78,24 +88,17 @@ pub fn suggested_models() -> Vec<SuggestedModel> {
 }
 
 fn parse_suggested(json: &str) -> Vec<SuggestedModel> {
-    let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
-    v["models"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|m| {
-                    Some(SuggestedModel {
-                        name: m["name"].as_str()?.to_string(),
-                        repo: m["repo"].as_str()?.to_string(),
-                        file: m["file"].as_str().unwrap_or("").to_string(),
-                        size: m["size"].as_str().unwrap_or("").to_string(),
-                        format: m["format"].as_str().unwrap_or("ggml").to_string(),
-                        note: m["note"].as_str().unwrap_or("").to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    #[derive(Default, Deserialize)]
+    struct SuggestedFile {
+        #[serde(default)]
+        models: Vec<serde_json::Value>,
+    }
+    let file: SuggestedFile = serde_json::from_str(json).unwrap_or_default();
+    file.models
+        .into_iter()
+        // per-entry: a malformed entry is dropped, the rest still load
+        .filter_map(|m| serde_json::from_value(m).ok())
+        .collect()
 }
 
 fn agent() -> ureq::Agent {
@@ -134,20 +137,30 @@ pub fn search(query: String, tx: Sender<HubEvent>) {
 }
 
 fn parse_search(v: &serde_json::Value) -> Vec<RepoHit> {
-    v.as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|m| {
-                    let id = m["id"].as_str().or_else(|| m["modelId"].as_str())?;
-                    Some(RepoHit {
-                        id: id.to_string(),
-                        downloads: m["downloads"].as_u64().unwrap_or(0),
-                        likes: m["likes"].as_u64().unwrap_or(0),
-                    })
-                })
-                .collect()
+    /// Search hits arrive with either `id` or the older `modelId`.
+    #[derive(Deserialize)]
+    struct RawHit {
+        id: Option<String>,
+        #[serde(rename = "modelId")]
+        model_id: Option<String>,
+        #[serde(default)]
+        downloads: u64,
+        #[serde(default)]
+        likes: u64,
+    }
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|entry| serde_json::from_value::<RawHit>(entry.clone()).ok())
+        .filter_map(|hit| {
+            Some(RepoHit {
+                id: hit.id.or(hit.model_id)?,
+                downloads: hit.downloads,
+                likes: hit.likes,
+            })
         })
-        .unwrap_or_default()
+        .collect()
 }
 
 /// List the GGML/GGUF files (with sizes) inside a repo.
@@ -168,19 +181,21 @@ pub fn list_files(repo: String, tx: Sender<HubEvent>) {
 }
 
 fn parse_files(v: &serde_json::Value) -> Vec<HubFile> {
+    #[derive(Deserialize)]
+    struct RawSibling {
+        rfilename: String,
+        // `size` may be absent or null → unknown
+        size: Option<u64>,
+    }
     let mut files: Vec<HubFile> = v["siblings"]
         .as_array()
         .map(|arr| {
             arr.iter()
-                .filter_map(|s| {
-                    let name = s["rfilename"].as_str()?;
-                    if !is_model_file(Path::new(name)) {
-                        return None;
-                    }
-                    Some(HubFile {
-                        name: name.to_string(),
-                        size_bytes: s["size"].as_u64().unwrap_or(0),
-                    })
+                .filter_map(|s| serde_json::from_value::<RawSibling>(s.clone()).ok())
+                .filter(|s| is_model_file(Path::new(&s.rfilename)))
+                .map(|s| HubFile {
+                    name: s.rfilename,
+                    size_bytes: s.size.unwrap_or(0),
                 })
                 .collect()
         })
@@ -296,17 +311,14 @@ fn download_blocking(
     Ok(Some(final_path))
 }
 
+/// Percent-encode everything outside the RFC 3986 unreserved set.
 fn urlencode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
+    const QUERY: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+        .remove(b'-')
+        .remove(b'.')
+        .remove(b'_')
+        .remove(b'~');
+    percent_encoding::utf8_percent_encode(s, QUERY).to_string()
 }
 
 #[cfg(test)]

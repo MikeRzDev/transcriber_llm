@@ -19,6 +19,7 @@ toml = "0.8"
 textwrap = "0.16"
 sysinfo = "0.39"
 libc = "0.2.186"
+percent-encoding = "2.3"
 ureq = "2"
 
 [profile.release]

@@ -1561,6 +1561,7 @@ dependencies = [
  "crossterm",
  "libc",
  "log",
+ "percent-encoding",
  "ratatui",
  "rubato",
  "serde",
