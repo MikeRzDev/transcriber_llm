@@ -115,6 +115,12 @@ fn ensure_model_loaded(
     // Drop the old context first so both models are never resident at once
     *loaded = None;
     let _ = events.send(Event::LoadingModel(model_name.to_string()));
+    let size = std::fs::metadata(&job.model).map(|m| m.len()).unwrap_or(0);
+    let _ = events.send(Event::EngineLog(format!(
+        "reading model file: {} ({})",
+        job.model.display(),
+        crate::format::human_size(size)
+    )));
     let started = Instant::now();
     // Read the file ourselves so load progress is real (byte-level) and
     // cancellable; whisper then initializes from the buffer. Peak memory
@@ -123,6 +129,9 @@ fn ensure_model_loaded(
         return Ok(false);
     };
     let _ = events.send(Event::LoadProgress(PARSE_PROGRESS));
+    let _ = events.send(Event::EngineLog(
+        "parsing ggml and uploading weights to Metal (GPU)…".into(),
+    ));
     let mut ctx_params = WhisperContextParameters::default();
     ctx_params.use_gpu(true);
     let ctx = WhisperContext::new_from_buffer_with_params(&buffer, ctx_params)?;
@@ -263,6 +272,7 @@ fn run_job(
     });
 
     let mut state = ctx.create_state()?;
+    let _ = events.send(Event::EngineLog("whisper inference state ready".into()));
 
     // Diarization is opt-in and only tdrz models emit turn markers
     let diarize = job.diarize && crate::models::is_tdrz(&model_name);
@@ -278,6 +288,12 @@ fn run_job(
     let caps = EngineCaps::whisper();
     let chunks = split::plan_chunks(&decoded.samples, &caps, job.split_mode);
     let n_chunks = chunks.len();
+    let _ = events.send(Event::EngineLog(format!(
+        "chunk plan: {n_chunks} chunk(s) · split mode {} · {threads} threads · \
+         language {language}{}",
+        job.split_mode.label(),
+        if diarize { " · diarization on" } else { "" }
+    )));
 
     let started = Instant::now();
     let mut labeled: Vec<Segment> = Vec::new();
@@ -291,6 +307,12 @@ fn run_job(
         let rate = caps.sample_rate as i64;
         let offset_ms = chunk.start as i64 * 1000 / rate;
         let emit_from_ms = chunk.emit_from as i64 * 1000 / rate;
+        let _ = events.send(Event::EngineLog(format!(
+            "chunk {}/{n_chunks}: {:.0}s → {:.0}s",
+            chunk_idx + 1,
+            chunk.start as f32 / caps.sample_rate as f32,
+            chunk.end as f32 / caps.sample_rate as f32
+        )));
 
         let params = build_params(
             diarize,

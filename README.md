@@ -39,7 +39,7 @@ Models are downloaded from inside the app: press `s` → **Model management** (s
 ## Usage
 
 ```sh
-# browse the current directory
+# browse your home folder
 transcribe-stt
 
 # start in a directory, or jump straight into transcribing a file
@@ -61,25 +61,25 @@ Supported video (audio track is ripped automatically via ffmpeg, with a live pro
 
 ### Drag & drop
 
-Drop any audio or video file from Finder onto the terminal window and transcription starts immediately (drop a folder to browse it). Works via bracketed paste, with a key-burst fallback for terminals that don't support it.
+Drop any audio or video file from Finder onto the terminal window and the start-confirmation dialog opens (drop a folder to browse it). Works via bracketed paste, with a key-burst fallback for terminals that don't support it.
 
 ### Keys
 
 | Key | Action |
 | --- | --- |
 | `Tab` | Switch between file browser and transcript |
-| `Enter` | Open directory / transcribe selected file |
+| `Enter` | Open directory / transcribe selected file (a confirmation dialog shows the file, model, and export formats before every job) |
 | `m` | Model picker (lists `.bin`/`.gguf` files and MLX model folders in the models folder) |
-| `s` | Settings: default model, models & output folders (via a built-in directory browser), model management, diarization, split mode, language (persisted) |
+| `s` | Settings: default model, models & output folders (via a built-in directory browser), export formats, model management, diarization, split mode, language (persisted) |
 | `d` | Toggle speaker diarization for the next transcription |
-| `e` | Re-export the transcript (exports also run automatically after every transcription) |
-| `c` | Cancel the running transcription |
+| `l` | Toggle the right pane between the **job log** (the default view) and the transcript. The log is a timestamped record of everything since the first file was loaded: file selection, model load, audio extraction, engine output, every segment, exports, errors (10k-line ring buffer, virtualized rendering, `j k`/`g`/`G` scroll with live follow) |
+| `c` | Cancel the running transcription (shown in the key bar only while a job is running) |
 | `↑↓` / `j k`, `PgUp/PgDn`, `g`/`G` | Navigate / scroll (G re-enables follow) |
 | `q` / `Ctrl-C` | Quit |
 
 ## LLM-ready export
 
-After every successful transcription, all formats are written automatically into `<output folder>/<source-stem>_<YYYYMMDD_HHMMSS>/`; `e` re-exports on demand. The output folder is set in settings and defaults to `~/Documents/llm_transcribe/output` on macOS (`~/llm_transcribe/output` on Linux). The primary output is `<name>.llm.md` — a transcript formatted for an LLM to reason over and act on:
+After every successful transcription, the selected formats are written automatically into `<output folder>/<source-stem>_<YYYYMMDD_HHMMSS>/`. Which formats get written is chosen in settings → *Export formats* — a multi-select of md, json, txt, and srt (all on by default; at least one always stays selected). The output folder is set in settings and defaults to `~/Documents/llm_transcribe/output` on macOS (`~/llm_transcribe/output` on Linux). The primary output is `<name>.llm.md` — a transcript formatted for an LLM to reason over and act on:
 
 - YAML frontmatter with machine-readable metadata: source file, duration, auto-detected language, model, segment count, and an explicit `diarization: none` marker
 - A short preamble telling the model how to interpret the document
@@ -123,7 +123,7 @@ Models live in `~/Documents/llm_transcribe/models` by default on macOS (`~/llm_t
 
 ## MLX engine (Parakeet, Qwen3-ASR, Canary, Whisper-MLX, …)
 
-Directory models run on the MLX engine, which shells out to [mlx-audio](https://github.com/Blaizzy/mlx-audio)'s STT CLI (`python -m mlx_audio.stt.generate`) — one runner for every MLX model family, so new families need no new engine code. Requirements: Apple Silicon; the runtime is **self-provisioning** — `scripts/install.sh` sets it up ahead of time, and if it's missing the first MLX job installs mlx-audio into an app-managed venv (`~/Library/Application Support/transcribe-stt/mlx-venv`, so it never fights the system/Homebrew Python) with a status spinner, cancellable like any job. A Python where mlx-audio is already installed is used as-is. Detection is a fast import probe (no model load); Model management shows the runtime status in its header. Audio is decoded by the same in-app pipeline as whisper (so video and exotic codecs work identically) and handed over as a temp 16 kHz WAV; the subprocess loads the model per job (cold start), progress is an indeterminate spinner, cancel kills the subprocess, and its JSON output (`segments` or `sentences`, with optional `speaker_id`) is mapped back into the same streamed segment/export pipeline. The whisper.cpp path is untouched: tdrz diarization, split modes, and the resident-context fast path remain whisper-only.
+Directory models run on the MLX engine, which shells out to [mlx-audio](https://github.com/Blaizzy/mlx-audio)'s STT CLI (`python -m mlx_audio.stt.generate`) — one runner for every MLX model family, so new families need no new engine code. Requirements: Apple Silicon; the runtime is **self-provisioning** — `scripts/install.sh` sets it up ahead of time, and if it's missing the first MLX job installs mlx-audio into an app-managed venv (`~/Library/Application Support/transcribe-stt/mlx-venv`, so it never fights the system/Homebrew Python) with pip's own progress streamed live into the status line, cancellable like any job. A Python where mlx-audio is already installed is used as-is. Detection is a fast import probe (no model load); Model management shows the runtime status in its header. Audio is decoded by the same in-app pipeline as whisper (so video and exotic codecs work identically) and handed over as a temp 16 kHz WAV; the subprocess loads the model per job (cold start); every line the subprocess prints streams live into the TUI status line (sanitized, `\r` progress bars included) so long silent phases always show what is happening; cancel kills the subprocess, and its JSON output (`segments` or `sentences`, with optional `speaker_id`) is mapped back into the same streamed segment/export pipeline. The RAM/CPU readout counts the whole process tree, so the Python child holding the MLX model weights is included. The whisper.cpp path is untouched: tdrz diarization, split modes, and the resident-context fast path remain whisper-only.
 
 ## Testing
 

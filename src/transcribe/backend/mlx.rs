@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -24,6 +24,21 @@ const INSTALL_HINT: &str = "install it manually with: pip3 install mlx-audio (ne
 
 /// How often child processes are polled for exit / cancellation.
 const POLL_INTERVAL: Duration = Duration::from_millis(120);
+
+/// While a child runs, a liveness heartbeat is emitted this often…
+const HEARTBEAT_EVERY: Duration = Duration::from_secs(5);
+/// …but only after this much output silence — a chatty child needs none.
+const QUIET_BEFORE_HEARTBEAT: Duration = Duration::from_secs(3);
+
+/// mlx-audio is nearly silent by default: with a local model there is no
+/// download chatter and generation prints nothing until the end. This
+/// -c shim switches Python's `logging` to INFO before handing control to
+/// the generate module (exactly what `-m` would run), so every internal
+/// log record the libraries emit reaches our stderr stream.
+const PY_LOGGING_SHIM: &str = "import logging, runpy, sys; \
+logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(name)s: %(message)s'); \
+sys.argv = ['mlx_audio.stt.generate'] + sys.argv[1:]; \
+runpy.run_module('mlx_audio.stt.generate', run_name='__main__')";
 
 /// Python interpreters probed, in order — both for an existing
 /// mlx_audio install and as the base interpreter for creating the
@@ -160,8 +175,15 @@ fn install_runtime(
     if let Some(parent) = venv.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let Some((status, stderr)) =
-        run_cancellable(Command::new(&base).arg("-m").arg("venv").arg(&venv), cancel)?
+    let _ = events.send(Event::EngineLog(format!(
+        "creating venv at {}",
+        venv.display()
+    )));
+    let Some((status, stderr)) = run_cancellable(
+        Command::new(&base).arg("-m").arg("venv").arg(&venv),
+        cancel,
+        Some(events),
+    )?
     else {
         return Ok(None);
     };
@@ -172,9 +194,15 @@ fn install_runtime(
     );
 
     let python = venv.join("bin").join("python3");
+    let _ = events.send(Event::EngineLog(
+        "installing mlx-audio via pip (several hundred MB, can take minutes)…".into(),
+    ));
+    // No --quiet: pip's collect/download lines stream to the TUI so the
+    // multi-minute install always shows what it is doing
     let Some((status, stderr)) = run_cancellable(
-        Command::new(&python).args(["-m", "pip", "install", "--quiet", "mlx-audio"]),
+        Command::new(&python).args(["-m", "pip", "install", "mlx-audio"]),
         cancel,
+        Some(events),
     )?
     else {
         return Ok(None);
@@ -199,41 +227,149 @@ pub fn mlx_audio_available() -> bool {
     venv_python().is_some() || *SYSTEM_PROBE.get_or_init(|| find_mlx_python().is_some())
 }
 
+/// Printable text only: ANSI escape sequences and control bytes from a
+/// child's progress bars would corrupt the ratatui status line.
+fn sanitize_line(bytes: &[u8]) -> String {
+    let raw = String::from_utf8_lossy(bytes);
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            // Skip CSI sequences: ESC [ params… final-byte
+            '\x1b' => {
+                if chars.next() == Some('[') {
+                    for c in chars.by_ref() {
+                        if ('\x40'..='\x7e').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+            }
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out.trim().to_string()
+}
+
+/// Forward one completed line to the TUI, skipping blanks and repeats
+/// (progress bars redraw the same line many times a second). Returns
+/// whether a line was actually sent.
+fn emit_line(line: &[u8], log: &Option<Sender<Event>>, last_sent: &mut String) -> bool {
+    let Some(log) = log else { return false };
+    let text = sanitize_line(line);
+    if text.is_empty() || text == *last_sent {
+        return false;
+    }
+    last_sent.clone_from(&text);
+    let _ = log.send(Event::EngineLog(text));
+    true
+}
+
+/// Drain a child pipe on a thread, forwarding each line (\n or \r
+/// terminated — tqdm/pip progress bars redraw with bare \r) as a live
+/// `Event::EngineLog`, stamping `activity` (ms since `started`) on every
+/// sent line so the heartbeat knows when the child went quiet. Join
+/// returns the full accumulated text.
+fn stream_lines<R: std::io::Read + Send + 'static>(
+    mut pipe: R,
+    log: Option<Sender<Event>>,
+    activity: Arc<AtomicU64>,
+    started: Instant,
+) -> std::thread::JoinHandle<String> {
+    std::thread::spawn(move || {
+        let mut all: Vec<u8> = Vec::new();
+        let mut line: Vec<u8> = Vec::new();
+        let mut last_sent = String::new();
+        let mut chunk = [0u8; 4096];
+        let flush = |line: &[u8], last_sent: &mut String| {
+            if emit_line(line, &log, last_sent) {
+                activity.store(started.elapsed().as_millis() as u64, Ordering::Relaxed);
+            }
+        };
+        loop {
+            let n = match pipe.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            all.extend_from_slice(&chunk[..n]);
+            for &b in &chunk[..n] {
+                if b == b'\n' || b == b'\r' {
+                    flush(&line, &mut last_sent);
+                    line.clear();
+                } else {
+                    line.push(b);
+                }
+            }
+        }
+        flush(&line, &mut last_sent);
+        String::from_utf8_lossy(&all).into_owned()
+    })
+}
+
 /// Run a command to completion, polling `cancel` (the child is killed on
-/// request → `Ok(None)`) and draining stderr on a thread so a chatty
-/// child can't fill the pipe and deadlock. Stdout is discarded.
+/// request → `Ok(None)`). Both pipes are drained on threads so a chatty
+/// child can't fill one and deadlock; with `log` set, every output line
+/// streams to the TUI live, and a heartbeat fires during output silence
+/// so the log never looks stalled. Returns the exit status and stderr.
 fn run_cancellable(
     cmd: &mut Command,
     cancel: &Arc<AtomicBool>,
+    log: Option<&Sender<Event>>,
 ) -> anyhow::Result<Option<(ExitStatus, String)>> {
     cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        // Python block-buffers stdout into a pipe; unbuffered keeps the
+        // live log real-time instead of arriving in late bursts
+        .env("PYTHONUNBUFFERED", "1");
     let mut child = cmd
         .spawn()
         .with_context(|| format!("spawning {}", cmd.get_program().to_string_lossy()))?;
-    let stderr = child.stderr.take();
-    let drain = std::thread::spawn(move || {
-        use std::io::Read;
-        let mut text = String::new();
-        if let Some(mut pipe) = stderr {
-            let _ = pipe.read_to_string(&mut text);
-        }
-        text
-    });
+    let started = Instant::now();
+    // ms-since-start of the child's most recent output line
+    let activity = Arc::new(AtomicU64::new(0));
+    let out_drain = stream_lines(
+        child.stdout.take().expect("stdout piped"),
+        log.cloned(),
+        activity.clone(),
+        started,
+    );
+    let err_drain = stream_lines(
+        child.stderr.take().expect("stderr piped"),
+        log.cloned(),
+        activity.clone(),
+        started,
+    );
+    let mut last_beat = Instant::now();
     let status = loop {
         if cancel.load(Ordering::SeqCst) {
             let _ = child.kill();
             let _ = child.wait();
-            let _ = drain.join();
+            let _ = out_drain.join();
+            let _ = err_drain.join();
             return Ok(None);
         }
         match child.try_wait()? {
             Some(status) => break status,
-            None => std::thread::sleep(POLL_INTERVAL),
+            None => {
+                if let Some(log) = log {
+                    let elapsed = started.elapsed();
+                    let quiet_ms = (elapsed.as_millis() as u64)
+                        .saturating_sub(activity.load(Ordering::Relaxed));
+                    if last_beat.elapsed() >= HEARTBEAT_EVERY
+                        && Duration::from_millis(quiet_ms) >= QUIET_BEFORE_HEARTBEAT
+                    {
+                        let _ = log.send(Event::EngineHeartbeat(elapsed.as_secs()));
+                        last_beat = Instant::now();
+                    }
+                }
+                std::thread::sleep(POLL_INTERVAL)
+            }
         }
     };
-    let stderr_text = drain.join().unwrap_or_default();
+    let _ = out_drain.join();
+    let stderr_text = err_drain.join().unwrap_or_default();
     Ok(Some((status, stderr_text)))
 }
 
@@ -248,6 +384,10 @@ impl Engine for MlxEngine {
             let _ = events.send(Event::Cancelled);
             return Ok(());
         };
+        let _ = events.send(Event::EngineLog(format!(
+            "mlx runtime: {}",
+            python.display()
+        )));
 
         let _ = events.send(Event::Decoding);
         let Some(decoded) = audio::load_media_with(&job.audio, Some(cancel.as_ref()), |p| {
@@ -267,10 +407,22 @@ impl Engine for MlxEngine {
         // exotic codecs work exactly like they do on the whisper path.
         let scratch = Scratch::new();
         audio::write_wav_16k_mono(&scratch.wav, &decoded.samples)?;
+        let _ = events.send(Event::EngineLog(format!(
+            "wrote handoff WAV: {} ({:.1}s @ 16 kHz mono)",
+            scratch.wav.display(),
+            decoded.duration_secs
+        )));
 
+        let model_name = job
+            .model
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let started = Instant::now();
         let mut cmd = Command::new(&python);
-        cmd.args(["-m", "mlx_audio.stt.generate", "--model"])
+        // PY_LOGGING_SHIM ≙ `-m mlx_audio.stt.generate`, with Python's
+        // INFO logging switched on so internals reach the job log.
+        cmd.args(["-c", PY_LOGGING_SHIM, "--model"])
             .arg(&job.model)
             .arg("--audio")
             .arg(&scratch.wav)
@@ -282,23 +434,32 @@ impl Engine for MlxEngine {
         if let Some(lang) = &job.language {
             cmd.args(["--language", lang]);
         }
-        // run_cancellable keeps the child's chatter off the TUI's
-        // terminal and kills it on cancel.
-        let Some((status, stderr_text)) = run_cancellable(&mut cmd, cancel)? else {
+        // mlx imports silently for several seconds before the first line
+        // of child output — say so instead of appearing stalled
+        let _ = events.send(Event::EngineLog(format!(
+            "spawning mlx_audio.stt.generate · model {model_name} (loads per job)"
+        )));
+        // run_cancellable streams the child's chatter into the status
+        // line as a live log and kills the child on cancel.
+        let Some((status, stderr_text)) = run_cancellable(&mut cmd, cancel, Some(events))? else {
             let _ = events.send(Event::Cancelled);
             return Ok(());
         };
+        let _ = events.send(Event::EngineLog(format!(
+            "mlx-audio exited with {status} after {:.1}s",
+            started.elapsed().as_secs_f32()
+        )));
         anyhow::ensure!(
             status.success(),
-            "mlx-audio failed on {}: {}",
-            job.model
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+            "mlx-audio failed on {model_name}: {}",
             error_summary(&stderr_text)
         );
 
         let segments = scratch.read_output(decoded.duration_secs)?;
+        let _ = events.send(Event::EngineLog(format!(
+            "parsed {} segment(s) from mlx-audio output",
+            segments.len()
+        )));
         for segment in &segments {
             let _ = events.send(Event::Segment(segment.clone()));
         }
@@ -513,6 +674,7 @@ mod tests {
         let (status, stderr) = run_cancellable(
             Command::new("sh").args(["-c", "echo oops >&2; exit 3"]),
             &Arc::new(AtomicBool::new(false)),
+            None,
         )
         .unwrap()
         .expect("not cancelled");
@@ -523,8 +685,45 @@ mod tests {
         let cancelled = run_cancellable(
             Command::new("sleep").arg("30"),
             &Arc::new(AtomicBool::new(true)),
+            None,
         )
         .unwrap();
         assert!(cancelled.is_none());
+    }
+
+    #[test]
+    fn run_cancellable_streams_both_pipes_as_log_events() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        // \r-terminated updates (progress-bar style) and \n lines, on
+        // both pipes, with a repeated line that must be deduplicated
+        let (status, stderr) = run_cancellable(
+            Command::new("sh").args([
+                "-c",
+                "printf 'downloading 10%%\\rdownloading 99%%\\r'; echo done; echo 'warn: x' >&2; echo 'warn: x' >&2",
+            ]),
+            &Arc::new(AtomicBool::new(false)),
+            Some(&tx),
+        )
+        .unwrap()
+        .expect("not cancelled");
+        assert!(status.success());
+        assert!(stderr.contains("warn: x"));
+
+        let mut lines: Vec<String> = Vec::new();
+        while let Ok(Event::EngineLog(line)) = rx.try_recv() {
+            lines.push(line);
+        }
+        // stdout/stderr drain on separate threads → order is not fixed
+        assert!(lines.contains(&"downloading 10%".to_string()));
+        assert!(lines.contains(&"downloading 99%".to_string()));
+        assert!(lines.contains(&"done".to_string()));
+        assert_eq!(lines.iter().filter(|l| *l == "warn: x").count(), 1);
+    }
+
+    #[test]
+    fn sanitize_line_strips_ansi_and_control_bytes() {
+        assert_eq!(sanitize_line(b"\x1b[32mgreen\x1b[0m  "), "green");
+        assert_eq!(sanitize_line(b"a\x07b\tc"), "abc");
+        assert_eq!(sanitize_line(b"   "), "");
     }
 }

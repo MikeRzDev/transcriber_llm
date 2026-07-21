@@ -4,8 +4,10 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 const REFRESH_EVERY: Duration = Duration::from_millis(1000);
 
-/// Live resource usage of this process (whisper worker threads included),
-/// refreshed at most once per second from the render loop.
+/// Live resource usage of this process tree — whisper worker threads,
+/// plus subprocess engines (the MLX Python child holds the model
+/// weights, so counting only our own PID would hide most of the RAM a
+/// job uses). Refreshed at most once per second from the render loop.
 pub struct ProcStats {
     system: System,
     pid: Pid,
@@ -39,15 +41,14 @@ impl ProcStats {
             return;
         }
         self.last_refresh = Instant::now();
+        // All processes, not just our PID: descendants (the MLX/pip
+        // children) can only be found by walking parent links.
         self.system.refresh_processes_specifics(
-            ProcessesToUpdate::Some(&[self.pid]),
+            ProcessesToUpdate::All,
             true,
             ProcessRefreshKind::nothing().with_memory().with_cpu(),
         );
-        if let Some(process) = self.system.process(self.pid) {
-            self.mem_bytes = process.memory();
-            self.cpu_percent = process.cpu_usage();
-        }
+        (self.mem_bytes, self.cpu_percent) = tally_tree(&self.system, self.pid);
     }
 
     pub fn label(&self) -> String {
@@ -59,6 +60,39 @@ impl Default for ProcStats {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Does `pid`'s parent chain reach `root`? Depth-capped in case of a
+/// stale/cyclic parent link in the snapshot.
+fn is_descendant(system: &System, pid: Pid, root: Pid) -> bool {
+    let mut current = pid;
+    for _ in 0..32 {
+        let Some(parent) = system.process(current).and_then(|p| p.parent()) else {
+            return false;
+        };
+        if parent == root {
+            return true;
+        }
+        current = parent;
+    }
+    false
+}
+
+/// Memory and CPU of `root` plus every live descendant.
+fn tally_tree(system: &System, root: Pid) -> (u64, f32) {
+    let mut mem = 0u64;
+    let mut cpu = 0.0f32;
+    if let Some(process) = system.process(root) {
+        mem = process.memory();
+        cpu = process.cpu_usage();
+    }
+    for (pid, process) in system.processes() {
+        if *pid != root && is_descendant(system, *pid, root) {
+            mem += process.memory();
+            cpu += process.cpu_usage();
+        }
+    }
+    (mem, cpu)
 }
 
 fn format_stats(mem_bytes: u64, cpu_percent: f32, core_count: usize) -> String {
@@ -89,5 +123,34 @@ mod tests {
         // The test binary certainly uses some memory
         assert!(stats.mem_bytes > 1_000_000, "mem: {}", stats.mem_bytes);
         assert!(stats.core_count >= 1);
+    }
+
+    #[test]
+    fn child_processes_count_toward_the_tally() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("10")
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing().with_memory().with_cpu(),
+        );
+        let root = Pid::from_u32(std::process::id());
+        let child_pid = Pid::from_u32(child.id());
+
+        assert!(
+            is_descendant(&system, child_pid, root),
+            "spawned child must be found via parent links"
+        );
+        let (tree_mem, _) = tally_tree(&system, root);
+        let own_mem = system.process(root).map(|p| p.memory()).unwrap_or(0);
+        assert!(tree_mem >= own_mem);
+
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }

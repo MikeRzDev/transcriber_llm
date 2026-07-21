@@ -55,46 +55,65 @@ pub(super) fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 pub(super) fn draw_keys(frame: &mut Frame, area: Rect, app: &App) {
-    let keys: &[(&str, &str)] = if app.hub.open {
-        &[
+    let keys: Vec<(&str, &str)> = if app.start_prompt.is_some() {
+        vec![
+            ("←→", "choose"),
+            ("Enter", "confirm"),
+            ("y/n", "shortcuts"),
+            ("Esc", "cancel"),
+        ]
+    } else if app.hub.open {
+        vec![
             ("type", "search"),
             ("↑↓", "select"),
             ("Enter", "open / download"),
             ("Esc", "back / cancel / close"),
         ]
     } else if app.settings.move_prompt.is_some() {
-        &[
+        vec![
             ("←→", "choose"),
             ("Enter", "confirm"),
             ("y/n", "shortcuts"),
             ("Esc", "leave them"),
         ]
     } else if app.settings.dir_picker.is_some() {
-        &[
+        vec![
             ("↑↓", "select"),
             ("Enter", "open / choose folder"),
             ("Esc", "cancel"),
         ]
     } else if app.picker.open {
-        &[
+        vec![
             ("↑↓", "select"),
             ("Enter", "set default model"),
             ("Esc", "close"),
         ]
+    } else if app.settings.formats_cursor.is_some() {
+        vec![
+            ("↑↓", "select"),
+            ("Space", "toggle format"),
+            ("Esc", "done"),
+        ]
     } else if app.settings.open {
-        &[("↑↓", "select"), ("Enter", "change"), ("Esc", "close")]
+        vec![("↑↓", "select"), ("Enter", "change"), ("Esc", "close")]
     } else {
-        &[
+        // The cancel key only exists while there is a job to cancel
+        let cancellable = app.busy() && app.work != WorkState::UnloadingModel;
+        let mut keys: Vec<(&str, &str)> = Vec::new();
+        if cancellable {
+            keys.push(("c", "cancel job"));
+        }
+        keys.extend([
             ("Tab", "pane"),
             ("Enter", "transcribe"),
             ("drop", "file → transcribe"),
+            ("l", if app.show_log { "transcript" } else { "log" }),
             ("m", "models"),
             ("s", "settings"),
             ("d", "diarize"),
-            ("e", "export"),
-            ("c", "cancel"),
             ("q", "quit"),
-        ]
+        ]);
+        keys
     };
     let mut spans: Vec<Span> = Vec::new();
     for (key, desc) in keys {

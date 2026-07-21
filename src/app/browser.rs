@@ -38,6 +38,10 @@ pub struct FileBrowser {
     pub cwd: PathBuf,
     pub entries: Vec<FileEntry>,
     pub selected: usize,
+    /// First visible row of the virtualized list. A Cell because the
+    /// definitive value depends on the viewport height, which is only
+    /// known at render time (where the App is borrowed immutably).
+    pub scroll: std::cell::Cell<usize>,
 }
 
 impl FileBrowser {
@@ -46,6 +50,7 @@ impl FileBrowser {
             cwd,
             entries: Vec::new(),
             selected: 0,
+            scroll: std::cell::Cell::new(0),
         };
         browser.refresh();
         browser
@@ -120,7 +125,47 @@ impl FileBrowser {
 impl App {
     pub fn enter_selected(&mut self) {
         if let Some(path) = self.browser.enter() {
-            self.start_transcription(path);
+            self.request_transcription(path);
         }
+    }
+}
+
+/// RecyclerView-style windowing for a virtualized list: keep the
+/// previous scroll offset, moving it only when the selection would
+/// leave the viewport. Only rows in [offset, offset+viewport) exist as
+/// widgets; everything else stays as raw data.
+pub fn scroll_window(offset: usize, selected: usize, len: usize, viewport: usize) -> usize {
+    if viewport == 0 || len == 0 {
+        return 0;
+    }
+    let max_offset = len.saturating_sub(viewport);
+    let mut off = offset.min(max_offset);
+    if selected < off {
+        off = selected; // selection moved above the window → snap up
+    } else if selected >= off + viewport {
+        off = selected + 1 - viewport; // below the window → snap down
+    }
+    off.min(max_offset)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scroll_window;
+
+    #[test]
+    fn window_follows_selection_minimally() {
+        // selection inside the window: offset unchanged
+        assert_eq!(scroll_window(5, 7, 100, 10), 5);
+        // selection walked below the window: scroll just enough
+        assert_eq!(scroll_window(5, 15, 100, 10), 6);
+        // selection jumped above the window: snap to it
+        assert_eq!(scroll_window(50, 3, 100, 10), 3);
+        // offset never exceeds len - viewport
+        assert_eq!(scroll_window(999, 99, 100, 10), 90);
+        // list shorter than the viewport never scrolls
+        assert_eq!(scroll_window(4, 2, 5, 10), 0);
+        // degenerate cases
+        assert_eq!(scroll_window(3, 0, 0, 10), 0);
+        assert_eq!(scroll_window(3, 5, 100, 0), 0);
     }
 }

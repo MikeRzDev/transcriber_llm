@@ -2,11 +2,12 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::export::ExportFormat;
 use crate::split::SplitMode;
 
 /// Persisted settings, stored as simple `key = value` lines in
 /// ~/.config/transcribe-stt/config.toml
-#[derive(Default, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub models_dir: Option<PathBuf>,
     pub output_dir: Option<PathBuf>,
@@ -17,6 +18,45 @@ pub struct Config {
     pub language: Option<String>,
     /// Chunking strategy for long audio
     pub split_mode: SplitMode,
+    /// Formats written after each transcription — never empty
+    pub export_formats: Vec<ExportFormat>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            models_dir: None,
+            output_dir: None,
+            default_model: None,
+            diarize: false,
+            language: None,
+            split_mode: SplitMode::default(),
+            export_formats: ExportFormat::ALL.to_vec(),
+        }
+    }
+}
+
+/// Comma list → formats in canonical order; unknown tokens are dropped
+/// and an empty result falls back to every format (the invariant is "at
+/// least one", so a hand-emptied config key must not disable exporting).
+fn parse_formats(value: &str) -> Vec<ExportFormat> {
+    let formats: Vec<ExportFormat> = ExportFormat::ALL
+        .into_iter()
+        .filter(|f| value.split(',').any(|tok| ExportFormat::parse(tok) == Some(*f)))
+        .collect();
+    if formats.is_empty() {
+        ExportFormat::ALL.to_vec()
+    } else {
+        formats
+    }
+}
+
+fn render_formats(formats: &[ExportFormat]) -> String {
+    formats
+        .iter()
+        .map(|f| f.key())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -72,6 +112,8 @@ struct ConfigToml {
     split_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    export_formats: Option<String>,
 }
 
 impl ConfigToml {
@@ -88,6 +130,11 @@ impl ConfigToml {
             split_mode: non_empty(self.split_mode)
                 .and_then(|mode| SplitMode::parse(&mode))
                 .unwrap_or_default(),
+            export_formats: self
+                .export_formats
+                .as_deref()
+                .map(parse_formats)
+                .unwrap_or_else(|| ExportFormat::ALL.to_vec()),
         }
     }
 
@@ -100,6 +147,8 @@ impl ConfigToml {
             split_mode: (config.split_mode != SplitMode::Auto)
                 .then(|| config.split_mode.as_str().to_string()),
             language: config.language.clone(),
+            export_formats: (config.export_formats != ExportFormat::ALL)
+                .then(|| render_formats(&config.export_formats)),
         }
     }
 }
@@ -139,6 +188,7 @@ fn parse_lenient(contents: &str) -> Config {
                 }
             }
             "language" if value != "auto" => config.language = Some(value.to_string()),
+            "export_formats" => config.export_formats = parse_formats(value),
             _ => {}
         }
     }
@@ -195,8 +245,25 @@ mod tests {
             diarize: true,
             language: Some("es".into()),
             split_mode: SplitMode::Silence,
+            export_formats: vec![ExportFormat::LlmMd, ExportFormat::Srt],
         };
         assert_eq!(parse_str(&render(&config)), config);
+    }
+
+    #[test]
+    fn export_formats_default_to_all_and_survive_garbage() {
+        // absent key → all formats
+        assert_eq!(parse_str("").export_formats, ExportFormat::ALL.to_vec());
+        // unknown tokens dropped, known ones kept in canonical order
+        assert_eq!(
+            parse_str("export_formats = \"srt,bogus,json\"").export_formats,
+            vec![ExportFormat::Json, ExportFormat::Srt]
+        );
+        // a hand-emptied key must not disable exporting entirely
+        assert_eq!(
+            parse_str("export_formats = \",,\"").export_formats,
+            ExportFormat::ALL.to_vec()
+        );
     }
 
     #[test]

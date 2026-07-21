@@ -6,15 +6,17 @@ mod browser;
 mod drop;
 mod events;
 mod hub_state;
+mod job_log;
 mod keys;
 mod library;
 mod settings;
 mod transcript;
 
 pub(crate) use browser::file_name;
-pub use browser::{FileBrowser, FileEntry};
+pub use browser::{scroll_window, FileBrowser, FileEntry};
 pub use drop::DropDetector;
 pub use hub_state::{Download, HubList, HubState, RepoView};
+pub use job_log::JobLog;
 pub use library::{ModelLibrary, ModelPicker};
 pub use settings::{DirPicker, DirRow, DirTarget, MovePrompt, SettingsRow, SettingsUi};
 pub use transcript::TranscriptState;
@@ -54,6 +56,12 @@ pub enum WorkState {
     },
 }
 
+/// Yes/No dialog shown before a transcription job starts.
+pub struct StartPrompt {
+    pub audio: PathBuf,
+    pub yes_selected: bool,
+}
+
 pub struct App {
     pub should_quit: bool,
     pub focus: Focus,
@@ -73,6 +81,13 @@ pub struct App {
     pub settings: SettingsUi,
     pub transcript: TranscriptState,
     pub hub: HubState,
+    /// Some while asking "transcribe this file?" — every job start goes
+    /// through this confirmation
+    pub start_prompt: Option<StartPrompt>,
+    /// Timestamped record of everything since the first file was loaded
+    pub job_log: JobLog,
+    /// Right pane shows the job log instead of the transcript (`l`)
+    pub show_log: bool,
 
     pub transcriber: Transcriber,
     hub_tx: Sender<HubEvent>,
@@ -122,6 +137,10 @@ impl App {
             settings: SettingsUi::new(),
             transcript: TranscriptState::new(),
             hub: HubState::new(),
+            start_prompt: None,
+            job_log: JobLog::new(),
+            // The log view is the default; `l` switches to the transcript
+            show_log: true,
             transcriber,
             hub_tx,
             hub_rx,
@@ -130,6 +149,23 @@ impl App {
 
     pub fn busy(&self) -> bool {
         self.work != WorkState::Idle
+    }
+
+    /// Every job start goes through here: opens the confirmation prompt
+    /// instead of starting immediately. `start_transcription` runs once
+    /// the prompt is confirmed.
+    pub fn request_transcription(&mut self, audio: PathBuf) {
+        if self.busy() && self.work != WorkState::UnloadingModel {
+            self.status = "A job is already running — press c to cancel it first".into();
+            return;
+        }
+        self.job_log
+            .push(format!("file selected: {}", audio.display()));
+        self.status = format!("Transcribe {}?", file_name(&audio));
+        self.start_prompt = Some(StartPrompt {
+            audio,
+            yes_selected: true,
+        });
     }
 
     pub fn start_transcription(&mut self, audio: PathBuf) {
@@ -164,6 +200,19 @@ impl App {
             name: model.name.clone(),
             progress: 0,
         };
+        self.job_log.push(format!(
+            "job start: {} · model {} · language {} · split {} · formats {}",
+            file_name(&audio),
+            model.name,
+            self.config.language.as_deref().unwrap_or("auto"),
+            self.config.split_mode.label(),
+            self.config
+                .export_formats
+                .iter()
+                .map(|f| f.key())
+                .collect::<Vec<_>>()
+                .join("/"),
+        ));
         self.status = format!("Starting {}", file_name(&audio));
         self.transcriber.submit(Job {
             model: model.path,
@@ -174,9 +223,9 @@ impl App {
         });
     }
 
-    /// Write every export format into `<output_dir>/<source>_<timestamp>/`
-    /// and return that folder. Runs automatically after each transcription;
-    /// `e` re-exports on demand.
+    /// Write the configured export formats into
+    /// `<output_dir>/<source>_<timestamp>/` and return that folder. Runs
+    /// automatically after each successful transcription.
     pub fn export(&mut self) -> Result<PathBuf> {
         let (Some(audio), false) = (
             self.transcript.source.clone(),
@@ -191,7 +240,10 @@ impl App {
             language: self.transcript.language.as_deref(),
             model_name: self.transcript.model_name.as_deref(),
         };
-        let written = doc.write_all(&self.output_dir)?;
+        let written = doc.write(&self.output_dir, &self.config.export_formats)?;
+        for path in &written {
+            self.job_log.push(format!("exported: {}", path.display()));
+        }
         Ok(written
             .first()
             .and_then(|p| p.parent())
@@ -252,6 +304,118 @@ mod tests {
         let app = test_app(dir.clone());
         let labels: Vec<String> = app.browser.entries.iter().map(|e| e.label()).collect();
         assert_eq!(labels, vec!["../", "z_subdir/", "a.mp4 \u{29c9}", "b.wav"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn every_worker_event_lands_in_the_job_log() {
+        let dir = tempdir();
+        let mut app = test_app(dir.clone());
+        app.handle_event(Event::LoadingModel("m.bin".into()));
+        app.handle_event(Event::LoadProgress(50));
+        app.handle_event(Event::ModelReady { load_secs: 1.2 });
+        app.handle_event(Event::Decoding);
+        app.handle_event(Event::DecodeProgress(40));
+        app.handle_event(Event::AudioInfo { duration_secs: 5.0 });
+        app.handle_event(Event::Progress(10));
+        app.handle_event(Event::EngineLog("mlx: fetching model".into()));
+        app.handle_event(Event::Segment(Segment {
+            start_ms: 0,
+            end_ms: 1000,
+            text: "hi".into(),
+            speaker: None,
+        }));
+        app.handle_event(Event::Error("boom".into()));
+
+        let joined: Vec<&str> = app.job_log.lines.iter().map(|s| s.as_str()).collect();
+        let joined = joined.join("\n");
+        for expected in [
+            "loading model m.bin",
+            "loading model: 50%",
+            "model ready in 1.2s",
+            "Decoding audio…",
+            "extracting audio: 40%",
+            "audio duration: 5.0s",
+            "transcribing: 10%",
+            "mlx: fetching model",
+            "segment [00:00 → 00:01] hi",
+            "ERROR: boom",
+        ] {
+            assert!(joined.contains(expected), "missing {expected:?} in:\n{joined}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn transcription_asks_for_confirmation_first() {
+        use crossterm::event::KeyModifiers;
+        let dir = tempdir();
+        std::fs::write(dir.join("clip.wav"), b"x").unwrap();
+        let mut app = test_app(dir.clone());
+
+        app.request_transcription(dir.join("clip.wav"));
+        let prompt = app.start_prompt.as_ref().expect("prompt opens");
+        assert!(prompt.yes_selected); // starting is the default choice
+        assert!(!app.busy(), "no job before confirmation");
+
+        // n cancels without starting
+        app.on_key(KeyCode::Char('n'), KeyModifiers::NONE);
+        assert!(app.start_prompt.is_none());
+        assert!(!app.busy());
+        assert!(app.status.contains("cancelled"));
+
+        // Enter on "No" also cancels
+        app.request_transcription(dir.join("clip.wav"));
+        app.on_key(KeyCode::Left, KeyModifiers::NONE); // flip to No
+        app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(app.start_prompt.is_none());
+        assert!(!app.busy());
+
+        // Enter on "Yes" proceeds into the normal start path (which
+        // fails fast here: no model is selected)
+        app.request_transcription(dir.join("clip.wav"));
+        app.library.selected = None;
+        app.config.diarize = false;
+        app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(app.start_prompt.is_none());
+        assert!(app.status.contains("No model"), "status: {}", app.status);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn export_format_toggle_keeps_at_least_one() {
+        use crate::export::ExportFormat;
+        let _guard = lock_env(); // toggling persists the config
+        let dir = tempdir();
+        std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
+        let mut app = test_app(dir.clone());
+
+        app.config.export_formats = vec![ExportFormat::Srt];
+        // the last selected format cannot be removed
+        app.toggle_export_format(ExportFormat::Srt);
+        assert_eq!(app.config.export_formats, vec![ExportFormat::Srt]);
+        assert!(app.status.contains("At least one"));
+
+        // re-adding rebuilds canonical order regardless of toggle order
+        app.toggle_export_format(ExportFormat::LlmMd);
+        assert_eq!(
+            app.config.export_formats,
+            vec![ExportFormat::LlmMd, ExportFormat::Srt]
+        );
+        // and only the selected formats are written on export
+        app.output_dir = dir.join("out");
+        app.transcript.source = Some(dir.join("clip.wav"));
+        app.transcript.segments.push(Segment {
+            start_ms: 0,
+            end_ms: 1000,
+            text: "hi".into(),
+            speaker: None,
+        });
+        let folder = app.export().unwrap();
+        assert!(folder.join("clip.llm.md").is_file());
+        assert!(folder.join("clip.srt").is_file());
+        assert!(!folder.join("clip.segments.json").exists());
+        assert!(!folder.join("clip.txt").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -134,6 +134,8 @@ fn run_headless_loop(rx: std::sync::mpsc::Receiver<Event>) -> Result<()> {
             Event::DecodeProgress(_) => {}
             Event::AudioInfo { duration_secs } => eprintln!("audio: {duration_secs:.1}s"),
             Event::Progress(_) => {}
+            Event::EngineLog(line) => eprintln!("{line}"),
+            Event::EngineHeartbeat(secs) => eprintln!("engine working… {secs}s elapsed"),
             Event::Segment(seg) => {
                 println!(
                     "[{} → {}] {}",

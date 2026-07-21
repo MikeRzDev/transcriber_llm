@@ -74,6 +74,14 @@ pub enum Event {
     /// 0–100 while transcribing; negative means the engine reports no
     /// fine-grained progress (UI shows an indeterminate spinner)
     Progress(i32),
+    /// A line of live output from a subprocess engine (mlx-audio, pip
+    /// during runtime setup) — surfaced in the status line so long
+    /// otherwise-silent phases always show what is happening
+    EngineLog(String),
+    /// Liveness signal sent while a subprocess engine runs without
+    /// printing anything (seconds since it started) — proves the job is
+    /// alive even when the child is completely silent
+    EngineHeartbeat(u64),
     Segment(Segment),
     /// Re-issued full transcript with speaker labels, sent after a
     /// tinydiarize run completes (streamed segments carry no speaker).

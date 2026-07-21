@@ -12,6 +12,12 @@ impl App {
             self.should_quit = true;
             return;
         }
+        // The start confirmation outranks every other modal: a dropped
+        // file can open it while e.g. the hub is up, and it renders on top
+        if self.start_prompt.is_some() {
+            self.start_prompt_key(code);
+            return;
+        }
         if self.hub.open {
             if !modifiers.contains(KeyModifiers::CONTROL) {
                 self.hub_key(code);
@@ -37,6 +43,37 @@ impl App {
         self.main_key(code);
     }
 
+    /// Keys for the "transcribe this file?" confirmation dialog.
+    fn start_prompt_key(&mut self, code: KeyCode) {
+        let Some(prompt) = &mut self.start_prompt else {
+            return;
+        };
+        match code {
+            KeyCode::Esc | KeyCode::Char('n') => {
+                self.start_prompt = None;
+                self.status = "Transcription cancelled".into();
+            }
+            KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Tab
+            | KeyCode::Char('h')
+            | KeyCode::Char('l') => prompt.yes_selected = !prompt.yes_selected,
+            KeyCode::Char('y') => {
+                let prompt = self.start_prompt.take().unwrap();
+                self.start_transcription(prompt.audio);
+            }
+            KeyCode::Enter => {
+                let prompt = self.start_prompt.take().unwrap();
+                if prompt.yes_selected {
+                    self.start_transcription(prompt.audio);
+                } else {
+                    self.status = "Transcription cancelled".into();
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn main_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Char('q') => self.should_quit = true,
@@ -52,16 +89,13 @@ impl App {
                 self.settings.open = true;
             }
             KeyCode::Char('d') => self.toggle_diarize(),
-            KeyCode::Char('e') => {
-                self.status = match self.export() {
-                    Ok(folder) => {
-                        format!("Exported llm.md + json/txt/srt to {}", folder.display())
-                    }
-                    Err(e) => format!("Export failed: {e}"),
-                };
+            KeyCode::Char('l') => {
+                // Right pane: transcript ⇄ job log
+                self.show_log = !self.show_log;
             }
             KeyCode::Char('c') => {
                 if self.busy() && self.work != WorkState::UnloadingModel {
+                    self.job_log.push("cancel requested");
                     self.transcriber.request_cancel();
                     self.status = "Cancelling…".into();
                 }
@@ -74,22 +108,44 @@ impl App {
             }
             KeyCode::Up | KeyCode::Char('k') => match self.focus {
                 Focus::Files => self.browser.select_prev(),
+                Focus::Transcript if self.show_log => self.job_log.scroll_up(1),
                 Focus::Transcript => self.transcript.scroll_up(1),
             },
             KeyCode::Down | KeyCode::Char('j') => match self.focus {
                 Focus::Files => self.browser.select_next(),
+                Focus::Transcript if self.show_log => self.job_log.scroll_down(1),
                 Focus::Transcript => self.transcript.scroll_down(1),
             },
             KeyCode::PageUp => {
                 self.focus = Focus::Transcript;
-                self.transcript.scroll_up(10);
+                if self.show_log {
+                    self.job_log.scroll_up(10);
+                } else {
+                    self.transcript.scroll_up(10);
+                }
             }
             KeyCode::PageDown => {
                 self.focus = Focus::Transcript;
-                self.transcript.scroll_down(10);
+                if self.show_log {
+                    self.job_log.scroll_down(10);
+                } else {
+                    self.transcript.scroll_down(10);
+                }
             }
-            KeyCode::Char('g') => self.transcript.scroll_top(),
-            KeyCode::Char('G') => self.transcript.follow_tail(),
+            KeyCode::Char('g') => {
+                if self.show_log {
+                    self.job_log.scroll_top();
+                } else {
+                    self.transcript.scroll_top();
+                }
+            }
+            KeyCode::Char('G') => {
+                if self.show_log {
+                    self.job_log.follow_tail();
+                } else {
+                    self.transcript.follow_tail();
+                }
+            }
             _ => {}
         }
     }

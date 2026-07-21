@@ -1,29 +1,39 @@
-//! Reactions to worker-thread events: the WorkState machine and the
-//! auto-export on completion.
+//! Reactions to worker-thread events: the WorkState machine, the job
+//! log (every event leaves a line), and the auto-export on completion.
 
 use crate::app::{App, WorkState};
+use crate::format::clock_time;
 use crate::transcribe::Event;
 
 impl App {
     pub fn handle_event(&mut self, event: Event) {
         match event {
             Event::LoadingModel(name) => {
+                self.job_log.push(format!("loading model {name}"));
                 self.status = format!("Loading {name}…");
                 self.work = WorkState::LoadingModel { name, progress: 0 };
             }
             Event::LoadProgress(p) => {
+                if p >= 0 {
+                    self.job_log
+                        .push_tagged("load-pct", &format!("loading model: {p}%"));
+                }
                 if let WorkState::LoadingModel { progress, .. } = &mut self.work {
                     *progress = p;
                 }
             }
             Event::ModelReady { load_secs } => {
+                self.job_log
+                    .push(format!("model ready in {load_secs:.1}s"));
                 self.status = format!("Model loaded in {load_secs:.1}s");
             }
             Event::Unloading => {
+                self.job_log.push("releasing model memory");
                 self.work = WorkState::UnloadingModel;
                 self.status = "Releasing model memory…".into();
             }
             Event::Unloaded => {
+                self.job_log.push("model unloaded — memory freed");
                 self.work = WorkState::Idle;
                 self.status = "Model unloaded — memory freed".into();
             }
@@ -40,26 +50,64 @@ impl App {
                 } else {
                     "Decoding audio…".into()
                 };
+                self.job_log.push(self.status.clone());
             }
             Event::DecodeProgress(p) => {
+                if p >= 0 {
+                    self.job_log
+                        .push_tagged("decode-pct", &format!("extracting audio: {p}%"));
+                }
                 if let WorkState::Decoding { progress } = &mut self.work {
                     *progress = p;
                 }
             }
             Event::AudioInfo { duration_secs } => {
+                self.job_log
+                    .push(format!("audio duration: {duration_secs:.1}s"));
                 self.transcript.duration_secs = Some(duration_secs);
                 self.work = WorkState::Transcribing { progress: 0 };
                 self.status = format!("Transcribing {duration_secs:.0}s of audio…");
             }
             Event::Progress(p) => {
+                if p >= 0 {
+                    self.job_log
+                        .push_tagged("transcribe-pct", &format!("transcribing: {p}%"));
+                }
                 if let WorkState::Transcribing { progress } = &mut self.work {
                     *progress = p;
                 }
             }
+            Event::EngineLog(line) => {
+                self.job_log.push(&line);
+                // The status line mirrors the latest line while work is
+                // in flight
+                if self.busy() {
+                    self.status = line;
+                }
+            }
+            Event::EngineHeartbeat(secs) => {
+                // Liveness while a silent subprocess works; consecutive
+                // beats coalesce into one updating line
+                let msg = format!("engine working… {secs}s elapsed, no output yet");
+                self.job_log.push_tagged("engine-heartbeat", &msg);
+                if self.busy() {
+                    self.status = msg;
+                }
+            }
             Event::Segment(seg) => {
+                self.job_log.push(format!(
+                    "segment [{} → {}] {}",
+                    clock_time(seg.start_ms),
+                    clock_time(seg.end_ms),
+                    seg.text.trim()
+                ));
                 self.transcript.segments.push(seg);
             }
             Event::SegmentsFinal(segments) => {
+                self.job_log.push(format!(
+                    "diarization: speaker labels applied to {} segments",
+                    segments.len()
+                ));
                 self.transcript.segments = segments;
             }
             Event::Done {
@@ -88,12 +136,15 @@ impl App {
                         Err(e) => format!("{base} — export FAILED: {e}"),
                     }
                 };
+                self.job_log.push(self.status.clone());
             }
             Event::Cancelled => {
+                self.job_log.push("job cancelled");
                 self.work = WorkState::Idle;
                 self.status = "Cancelled".into();
             }
             Event::Error(msg) => {
+                self.job_log.push(format!("ERROR: {msg}"));
                 self.work = WorkState::Idle;
                 self.status = format!("Error: {msg}");
             }

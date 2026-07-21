@@ -8,6 +8,54 @@ use anyhow::Result;
 use crate::format::{llm_time, srt_time};
 use crate::transcribe::Segment;
 
+/// The selectable transcript output formats.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ExportFormat {
+    LlmMd,
+    Json,
+    Txt,
+    Srt,
+}
+
+impl ExportFormat {
+    /// Canonical order — selection lists and written files follow it.
+    pub const ALL: [Self; 4] = [Self::LlmMd, Self::Json, Self::Txt, Self::Srt];
+
+    /// Short token used in the config file and settings summary.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::LlmMd => "md",
+            Self::Json => "json",
+            Self::Txt => "txt",
+            Self::Srt => "srt",
+        }
+    }
+
+    /// Human description for the selection dialog.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::LlmMd => "md   — LLM-optimized markdown (.llm.md)",
+            Self::Json => "json — segment data (.segments.json)",
+            Self::Txt => "txt  — plain text",
+            Self::Srt => "srt  — subtitles",
+        }
+    }
+
+    /// File name suffix appended to the source stem.
+    fn extension(self) -> &'static str {
+        match self {
+            Self::LlmMd => "llm.md",
+            Self::Json => "segments.json",
+            Self::Txt => "txt",
+            Self::Srt => "srt",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|f| f.key() == s.trim())
+    }
+}
+
 /// Everything needed to render a transcript in any output format.
 pub struct TranscriptDoc<'a> {
     pub segments: &'a [Segment],
@@ -18,27 +66,39 @@ pub struct TranscriptDoc<'a> {
 }
 
 impl TranscriptDoc<'_> {
-    /// Write all formats into `<out_base>/<source-stem>_<timestamp>/`.
+    /// Write the selected formats into `<out_base>/<source-stem>_<timestamp>/`.
     /// Returns the paths written.
-    pub fn write_all(&self, out_base: &Path) -> Result<Vec<PathBuf>> {
+    pub fn write(&self, out_base: &Path, formats: &[ExportFormat]) -> Result<Vec<PathBuf>> {
+        anyhow::ensure!(!formats.is_empty(), "no export formats selected");
         let stem = Path::new(&self.source_name)
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "transcript".into());
         let dir = out_base.join(format!("{stem}_{}", local_timestamp()));
         std::fs::create_dir_all(&dir)?;
-        let outputs = [
-            (dir.join(format!("{stem}.llm.md")), self.llm_markdown()),
-            (dir.join(format!("{stem}.segments.json")), self.json()),
-            (dir.join(format!("{stem}.txt")), self.plain_text()),
-            (dir.join(format!("{stem}.srt")), self.srt()),
-        ];
-        let mut written = Vec::with_capacity(outputs.len());
-        for (path, contents) in outputs {
-            std::fs::write(&path, contents)?;
+        let mut written = Vec::with_capacity(formats.len());
+        for format in formats {
+            let contents = match format {
+                ExportFormat::LlmMd => self.llm_markdown(),
+                ExportFormat::Json => self.json(),
+                ExportFormat::Txt => self.plain_text(),
+                ExportFormat::Srt => self.srt(),
+            };
+            let path = dir.join(format!("{stem}.{}", format.extension()));
+            if let Err(e) = std::fs::write(&path, contents) {
+                // All-or-nothing: a half-written export folder must not
+                // survive — only finished jobs exist in the output folder
+                let _ = std::fs::remove_dir_all(&dir);
+                return Err(e.into());
+            }
             written.push(path);
         }
         Ok(written)
+    }
+
+    /// `write` with every format — the default configuration.
+    pub fn write_all(&self, out_base: &Path) -> Result<Vec<PathBuf>> {
+        self.write(out_base, &ExportFormat::ALL)
     }
 
     pub fn plain_text(&self) -> String {
@@ -364,6 +424,73 @@ mod tests {
             );
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn write_subset_writes_only_selected_formats() {
+        let dir = std::env::temp_dir().join(format!(
+            "transcribe-stt-export-subset-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let segments = vec![seg(0, 1000, "Hello.")];
+        let doc = TranscriptDoc {
+            segments: &segments,
+            source_name: "clip.wav".into(),
+            duration_secs: Some(1.0),
+            language: Some("en"),
+            model_name: None,
+        };
+        let written = doc
+            .write(&dir, &[ExportFormat::Json, ExportFormat::Srt])
+            .unwrap();
+        assert_eq!(written.len(), 2);
+        let out_dir = written[0].parent().unwrap();
+        assert!(out_dir.join("clip.segments.json").is_file());
+        assert!(out_dir.join("clip.srt").is_file());
+        assert!(!out_dir.join("clip.llm.md").exists());
+        assert!(!out_dir.join("clip.txt").exists());
+
+        // an empty selection is a hard error, not a silent no-op
+        assert!(doc.write(&dir, &[]).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_export_leaves_no_folder_behind() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!(
+            "transcribe-stt-export-ro-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let segments = vec![seg(0, 1000, "Hello.")];
+        let doc = TranscriptDoc {
+            segments: &segments,
+            source_name: "clip.wav".into(),
+            duration_secs: Some(1.0),
+            language: Some("en"),
+            model_name: None,
+        };
+        assert!(doc.write(&base, &ExportFormat::ALL).is_err());
+        // only finished jobs may exist in the output folder
+        assert_eq!(std::fs::read_dir(&base).unwrap().count(), 0);
+
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn format_keys_parse_round_trip() {
+        for format in ExportFormat::ALL {
+            assert_eq!(ExportFormat::parse(format.key()), Some(format));
+        }
+        assert_eq!(ExportFormat::parse(" md "), Some(ExportFormat::LlmMd));
+        assert_eq!(ExportFormat::parse("bogus"), None);
     }
 
     #[test]

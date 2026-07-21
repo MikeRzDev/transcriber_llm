@@ -7,6 +7,7 @@ use crossterm::event::KeyCode;
 
 use crate::app::App;
 use crate::config;
+use crate::export::ExportFormat;
 use crate::hub::HubEvent;
 use crate::models;
 
@@ -16,6 +17,7 @@ pub enum SettingsRow {
     DefaultModel,
     ModelsFolder,
     OutputFolder,
+    ExportFormats,
     ModelManagement,
     Diarize,
     SplitMode,
@@ -23,10 +25,11 @@ pub enum SettingsRow {
 }
 
 impl SettingsRow {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::DefaultModel,
         Self::ModelsFolder,
         Self::OutputFolder,
+        Self::ExportFormats,
         Self::ModelManagement,
         Self::Diarize,
         Self::SplitMode,
@@ -55,6 +58,8 @@ pub struct SettingsUi {
     pub dir_picker: Option<DirPicker>,
     /// Some while asking whether to move models into the new folder
     pub move_prompt: Option<MovePrompt>,
+    /// Some(cursor) while the export-formats checkbox dialog is open
+    pub formats_cursor: Option<usize>,
 }
 
 impl SettingsUi {
@@ -65,6 +70,7 @@ impl SettingsUi {
             language_input: None,
             dir_picker: None,
             move_prompt: None,
+            formats_cursor: None,
         }
     }
 }
@@ -166,6 +172,25 @@ pub struct MovePrompt {
 
 impl App {
     pub(crate) fn settings_key(&mut self, code: KeyCode) {
+        if let Some(cursor) = self.settings.formats_cursor {
+            match code {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('s') => {
+                    self.settings.formats_cursor = None;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.settings.formats_cursor = Some(cursor.saturating_sub(1));
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.settings.formats_cursor =
+                        Some((cursor + 1).min(ExportFormat::ALL.len() - 1));
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    self.toggle_export_format(ExportFormat::ALL[cursor]);
+                }
+                _ => {}
+            }
+            return;
+        }
         if let Some(input) = &mut self.settings.language_input {
             match code {
                 KeyCode::Char(c) => input.push(c),
@@ -195,6 +220,7 @@ impl App {
                 SettingsRow::DefaultModel => self.open_model_picker(),
                 SettingsRow::ModelsFolder => self.open_dir_picker(DirTarget::Models),
                 SettingsRow::OutputFolder => self.open_dir_picker(DirTarget::Output),
+                SettingsRow::ExportFormats => self.settings.formats_cursor = Some(0),
                 SettingsRow::ModelManagement => {
                     self.settings.open = false;
                     self.open_hub();
@@ -239,6 +265,37 @@ impl App {
             return;
         }
         let _ = config::save(&self.config);
+    }
+
+    /// Toggle one export format on/off and persist. The last selected
+    /// format cannot be removed — every transcription must export
+    /// something.
+    pub fn toggle_export_format(&mut self, format: ExportFormat) {
+        if self.config.export_formats.contains(&format) {
+            if self.config.export_formats.len() == 1 {
+                self.status = "At least one export format must stay selected".into();
+                return;
+            }
+            self.config.export_formats.retain(|f| *f != format);
+        } else {
+            // Rebuild from canonical order so the list never depends on
+            // the order formats were toggled in
+            let current = self.config.export_formats.clone();
+            self.config.export_formats = ExportFormat::ALL
+                .into_iter()
+                .filter(|f| current.contains(f) || *f == format)
+                .collect();
+        }
+        let _ = config::save(&self.config);
+        self.status = format!(
+            "Export formats: {}",
+            self.config
+                .export_formats
+                .iter()
+                .map(|f| f.key())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
 
     /// Cycle the long-audio split strategy and persist it.

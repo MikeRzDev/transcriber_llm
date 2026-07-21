@@ -7,13 +7,16 @@ mod files;
 mod header;
 mod hub;
 mod layout;
+mod log;
 mod model_picker;
 mod move_prompt;
 mod settings;
+mod start_prompt;
 mod status;
 mod theme;
 mod transcript;
 
+pub use log::clamp_log;
 pub use transcript::clamp_transcript;
 
 use ratatui::Frame;
@@ -25,12 +28,19 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     header::draw_header(frame, areas.header, app);
     files::draw_files(frame, areas.files, app);
-    transcript::draw_transcript(frame, areas.transcript, app);
+    if app.show_log {
+        log::draw_log(frame, areas.transcript, app);
+    } else {
+        transcript::draw_transcript(frame, areas.transcript, app);
+    }
     status::draw_status(frame, areas.status, app);
     status::draw_keys(frame, areas.keys, app);
 
     if app.settings.open {
         settings::draw_settings(frame, app);
+        if app.settings.formats_cursor.is_some() {
+            settings::draw_export_formats(frame, app);
+        }
     }
     if app.picker.open {
         model_picker::draw_model_picker(frame, app);
@@ -46,5 +56,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
     if app.settings.move_prompt.is_some() {
         move_prompt::draw_move_prompt(frame, app);
+    }
+    // Topmost: it can open over any other modal (e.g. a file dropped
+    // while the hub is up) and its keys take priority
+    if app.start_prompt.is_some() {
+        start_prompt::draw_start_prompt(frame, app);
     }
 }

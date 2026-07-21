@@ -14,19 +14,33 @@ use crate::cli::Args;
 use crate::{transcribe, ui};
 
 pub fn run(args: Args) -> Result<()> {
-    let cwd = std::env::current_dir()?;
+    // Without an explicit path, browse from $HOME (mac and Linux): a
+    // Finder/.app launch gives a useless cwd like /, and home is where
+    // media lives. An explicit path argument still wins.
+    let default_dir = || {
+        std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_dir())
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+    };
     let (start_dir, auto_file) = match args.path {
         Some(p) if p.is_dir() => (p, None),
-        Some(p) if p.is_file() => (p.parent().map(|d| d.to_path_buf()).unwrap_or(cwd), Some(p)),
+        Some(p) if p.is_file() => (
+            p.parent().map(|d| d.to_path_buf()).unwrap_or_else(default_dir),
+            Some(p),
+        ),
         Some(p) => bail!("path not found: {}", p.display()),
-        None => (cwd, None),
+        None => (default_dir(), None),
     };
 
     let (tx, rx) = channel();
     let transcriber = transcribe::spawn(tx);
     let mut app = App::new(start_dir, args.model, transcriber);
     if let Some(file) = auto_file {
-        app.start_transcription(file);
+        // Confirmed like any other start — the TUI never begins a job
+        // without asking
+        app.request_transcription(file);
     }
 
     let mut terminal = ratatui::init();
@@ -40,10 +54,9 @@ pub fn run(args: Args) -> Result<()> {
             app.stats.refresh_if_due();
             app.tick = app.tick.wrapping_add(1);
             let size = terminal.size()?;
-            ui::clamp_transcript(
-                &mut app,
-                ratatui::layout::Rect::new(0, 0, size.width, size.height),
-            );
+            let screen = ratatui::layout::Rect::new(0, 0, size.width, size.height);
+            ui::clamp_transcript(&mut app, screen);
+            ui::clamp_log(&mut app, screen);
             terminal.draw(|frame| ui::draw(frame, &app))?;
 
             while let Ok(event) = rx.try_recv() {

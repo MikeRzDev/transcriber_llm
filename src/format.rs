@@ -23,6 +23,14 @@ pub fn llm_time(ms: i64) -> String {
     format!("{h:02}:{m:02}:{s:02}")
 }
 
+/// Local wall-clock time as `HH:MM:SS`, for job-log line stamps.
+pub fn clock_now() -> String {
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let t = unsafe { libc::time(std::ptr::null_mut()) };
+    unsafe { libc::localtime_r(&t, &mut tm) };
+    format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
+}
+
 /// Compact form for the transcript pane: `MM:SS`, hours only when needed.
 pub fn clock_time(ms: i64) -> String {
     let (h, m, s, _) = hms(ms);

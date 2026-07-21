@@ -97,7 +97,7 @@ impl App {
             self.status = format!("Unsupported file type: {}", file_name(&path));
             return;
         }
-        self.start_transcription(path);
+        self.request_transcription(path);
     }
 }
 
