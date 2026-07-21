@@ -14,7 +14,7 @@ mod transcript;
 pub use browser::{FileBrowser, FileEntry};
 pub(crate) use browser::file_name;
 pub use drop::DropDetector;
-pub use hub_state::HubState;
+pub use hub_state::{HubList, HubState};
 pub use library::{ModelLibrary, ModelPicker};
 pub use settings::{DirPicker, DirRow, DirTarget, MovePrompt, SettingsRow, SettingsUi};
 pub use transcript::TranscriptState;

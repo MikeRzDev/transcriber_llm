@@ -33,7 +33,40 @@ pub struct HubState {
     pub(crate) last_edit: Option<Instant>,
 }
 
+/// Whichever of the three hub lists is currently visible.
+pub enum HubList<'a> {
+    Files(&'a [HubFile]),
+    Results(&'a [RepoHit]),
+    Suggested(&'a [SuggestedModel]),
+}
+
+impl HubList<'_> {
+    pub fn len(&self) -> usize {
+        match self {
+            HubList::Files(files) => files.len(),
+            HubList::Results(results) => results.len(),
+            HubList::Suggested(suggested) => suggested.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 impl HubState {
+    /// Priority order: a repo's file view, then search results, then the
+    /// suggested list.
+    pub fn visible_list(&self) -> HubList<'_> {
+        if let Some((_, files)) = &self.files {
+            HubList::Files(files)
+        } else if let Some(results) = &self.results {
+            HubList::Results(results)
+        } else {
+            HubList::Suggested(&self.suggested)
+        }
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             open: false,
@@ -101,7 +134,7 @@ impl App {
             }
             KeyCode::Up => self.hub.selected = self.hub.selected.saturating_sub(1),
             KeyCode::Down => {
-                let len = self.hub_list_len();
+                let len = self.hub.visible_list().len();
                 if len > 0 {
                     self.hub.selected = (self.hub.selected + 1).min(len - 1);
                 }
@@ -125,16 +158,6 @@ impl App {
         if self.hub.input.trim().is_empty() {
             self.hub.results = None;
             self.hub.searching = false;
-        }
-    }
-
-    fn hub_list_len(&self) -> usize {
-        if let Some((_, files)) = &self.hub.files {
-            files.len()
-        } else if let Some(results) = &self.hub.results {
-            results.len()
-        } else {
-            self.hub.suggested.len()
         }
     }
 
