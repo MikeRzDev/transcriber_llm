@@ -98,6 +98,7 @@ def _install_tqdm_probe():
             mod.tqdm = ProbeTqdm
 
 def run_instrumented():
+    import inspect
     import platform
     mark(f"python {platform.python_version()} up · importing mlx-audio (loads Metal)…")
     import mlx_audio.stt.models  # first: completes generate.py's import cycle
@@ -114,6 +115,53 @@ def run_instrumented():
     kwargs = {}
     if "--language" in flags:
         kwargs["language"] = flags["--language"]
+    # Some model families need per-job decode limits the mlx-audio
+    # defaults get wrong on long recordings. getattr, not type(model):
+    # a few wrapper classes only expose generate via delegation, and an
+    # AttributeError here would silently demote the job to the stock CLI.
+    gen_params = {}
+    gen = getattr(model, "generate", None)
+    if gen is not None:
+        try:
+            gen_params = inspect.signature(gen).parameters
+        except (TypeError, ValueError):
+            gen_params = {}
+    # chunk_duration=None default (parakeet) attends over the entire
+    # file in one pass — on long recordings that is a multi-GB Metal
+    # allocation that aborts the job. Bound those; models that declare
+    # their own chunking default keep it. The stock CLI fallback below
+    # chunks at 30s on its own.
+    chunk_param = gen_params.get("chunk_duration")
+    if chunk_param is not None and chunk_param.default is None:
+        kwargs["chunk_duration"] = 120.0
+        mark("model attends whole-file by default; bounding chunks to 120s")
+    elif chunk_param is not None and (chunk_param.default or 0) > 300:
+        # LLM-style models default to 20-minute chunks: one degenerate
+        # chunk can eat the whole token budget (mlx-audio then silently
+        # drops the remaining chunks), and every chunk lands in the
+        # exports as a single 20-minute segment. Five-minute chunks
+        # bound both; the splitter cuts at silence, not mid-word.
+        kwargs["chunk_duration"] = 300.0
+        mark("capping model chunking to 300s for stable long-audio output")
+    # Greedy LLM decoders can degenerate into endless filler (". . .")
+    # that burns the token budget; a mild penalty breaks such loops
+    # without touching normal speech.
+    if "repetition_penalty" in gen_params:
+        kwargs["repetition_penalty"] = 1.1
+    # max_tokens is a TOTAL text budget across all chunks (qwen3-asr:
+    # 8192 ≈ 35-40 min of dense speech) — once spent, the rest of the
+    # audio is silently dropped. Scale it to the handoff WAV's length;
+    # ~10 tokens/s is ~2.5x the densest rate observed in real calls.
+    if "max_tokens" in gen_params:
+        try:
+            import wave
+            with wave.open(flags["--audio"], "rb") as w:
+                dur_secs = w.getnframes() / (w.getframerate() or 16000)
+        except (OSError, EOFError, wave.Error):
+            dur_secs = 0
+        if dur_secs > 0:
+            kwargs["max_tokens"] = max(8192, int(dur_secs * 10))
+            mark(f"token budget {kwargs['max_tokens']} for {dur_secs:.0f}s of audio")
     t = time.time()
     mark("transcribing…")
     generate_transcription(

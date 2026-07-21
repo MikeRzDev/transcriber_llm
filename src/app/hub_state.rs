@@ -43,6 +43,9 @@ pub struct HubState {
     pub info: String,
     /// Some while confirming deletion of a downloaded model
     pub delete_prompt: Option<DeletePrompt>,
+    /// The download target (dest name) whose memory-misfit warning was
+    /// shown; Enter on the same target again downloads anyway
+    pub hw_ack: Option<String>,
     /// Debounce marker: search fires shortly after typing pauses
     pub(crate) last_edit: Option<Instant>,
 }
@@ -135,6 +138,8 @@ pub struct DefaultEntry<'a> {
     pub supported: bool,
     /// Present in the models folder
     pub installed: bool,
+    /// Fits this machine's memory budget (see [`crate::hw::fits`])
+    pub hw_ok: bool,
 }
 
 impl HubState {
@@ -151,6 +156,7 @@ impl HubState {
             download: None,
             info: String::new(),
             delete_prompt: None,
+            hw_ack: None,
             last_edit: None,
         }
     }
@@ -162,6 +168,7 @@ impl App {
         self.hub.open = true;
         self.hub.selected = 0;
         self.hub.info.clear();
+        self.hub.hw_ack = None;
         // An unusable models folder explains itself immediately instead
         // of failing the first download with a bare OS error
         if let Some(reason) = crate::models::dir_unavailable(&self.library.dir) {
@@ -199,6 +206,7 @@ impl App {
                 is_dir: m.is_dir,
                 supported: true,
                 installed: true,
+                hw_ok: crate::hw::fits(m.size_bytes),
             });
         }
         for s in &self.hub.suggested {
@@ -218,6 +226,7 @@ impl App {
                 is_dir: s.is_dir_model(),
                 supported: s.supported(),
                 installed: false,
+                hw_ok: crate::hw::fits(crate::hw::parse_human_size(&s.size)),
             });
         }
         // The diarization category: the tdrz whisper build (the
@@ -238,6 +247,7 @@ impl App {
             is_dir: false,
             supported: true,
             installed: false,
+            hw_ok: true,
         });
         entries.push(DefaultEntry {
             kind: EntryKind::Diarize,
@@ -251,6 +261,7 @@ impl App {
             is_dir: false,
             supported: true,
             installed: self.library.models.iter().any(|m| models::is_tdrz(&m.name)),
+            hw_ok: true,
         });
         for m in &sherpa::CATALOG {
             let configured = match m.role {
@@ -269,6 +280,7 @@ impl App {
                 is_dir: false,
                 supported: true,
                 installed: m.installed(&self.library.dir),
+                hw_ok: true,
             });
         }
         entries
@@ -357,6 +369,22 @@ impl App {
         }
     }
 
+    /// Memory gate before a download: passes when the model fits this
+    /// machine (or its size is unknown), or when the misfit warning for
+    /// this exact target was already shown and Enter came again.
+    fn hub_hw_gate(&mut self, dest: &str, name: &str, weights_bytes: u64) -> bool {
+        if crate::hw::fits(weights_bytes) || self.hub.hw_ack.as_deref() == Some(dest) {
+            self.hub.hw_ack = None;
+            return true;
+        }
+        self.hub.hw_ack = Some(dest.to_string());
+        self.hub.info = format!(
+            "⚠ {name} {} — Enter again to download anyway",
+            crate::hw::misfit_note(weights_bytes)
+        );
+        false
+    }
+
     fn hub_enter(&mut self) {
         if self.hub.download.is_some() {
             self.hub.info = "A download is already running — p pauses · Esc cancels".into();
@@ -372,12 +400,19 @@ impl App {
                 }
                 let repo = view.repo.clone();
                 let subdir = variant.subdir.clone();
+                let dest = hub::variant_dir_name(&repo, &subdir);
+                if !self.hub_hw_gate(&dest, &dest, variant.size_bytes) {
+                    return;
+                }
                 self.hub_start_dir_download(repo, subdir);
             } else if let Some(f) = view
                 .files
                 .get(self.hub.selected - view.variants.len())
             {
-                let (repo, file) = (view.repo.clone(), f.name.clone());
+                let (repo, file, size) = (view.repo.clone(), f.name.clone(), f.size_bytes);
+                if !self.hub_hw_gate(&file, &file, size) {
+                    return;
+                }
                 self.hub_start_download(repo, file);
             }
             return;
@@ -405,9 +440,11 @@ impl App {
                 e.file.clone(),
                 e.name.to_string(),
                 e.format.to_string(),
+                crate::hw::parse_human_size(&e.size),
             )
         });
-        let Some((kind, installed, supported, is_dir, repo, file, name, format)) = action else {
+        let Some((kind, installed, supported, is_dir, repo, file, name, format, weights)) = action
+        else {
             return;
         };
         match kind {
@@ -437,8 +474,16 @@ impl App {
                     if let Some(model) =
                         self.library.models.iter().find(|m| m.name == file).cloned()
                     {
+                        let size_bytes = model.size_bytes;
                         self.choose_model(model);
-                        self.hub.info = format!("Selected {file} as the default model");
+                        self.hub.info = if crate::hw::fits(size_bytes) {
+                            format!("Selected {file} as the default model")
+                        } else {
+                            format!(
+                                "Selected {file} — ⚠ {}; jobs may abort out of memory",
+                                crate::hw::misfit_note(size_bytes)
+                            )
+                        };
                     }
                 } else if !supported {
                     self.hub.info = if format == "mlx" {
@@ -447,6 +492,9 @@ impl App {
                         format!("{name} is {format}-format — no engine here can run it")
                     };
                 } else if let Some(repo) = repo {
+                    if !self.hub_hw_gate(&file, &name, weights) {
+                        return;
+                    }
                     if is_dir {
                         self.hub_start_dir_download(repo, String::new());
                     } else {

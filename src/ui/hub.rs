@@ -271,6 +271,12 @@ fn list_content<'a>(app: &'a App, visible: &HubList<'a>) -> (String, Vec<ListIte
                             Span::styled(format!("{:>9}  ", e.size), white),
                             Span::styled(engine_tag, Style::default().fg(Color::Green)),
                         ];
+                        if !e.hw_ok {
+                            spans.push(Span::styled(
+                                "  ⚠ exceeds this Mac's memory",
+                                Style::default().fg(Color::Yellow),
+                            ));
+                        }
                         if !e.note.is_empty() {
                             spans.push(Span::styled(
                                 format!("  {}", e.note),
@@ -286,11 +292,18 @@ fn list_content<'a>(app: &'a App, visible: &HubList<'a>) -> (String, Vec<ListIte
                         } else {
                             format!("{:>9}  {}  {}", e.size, e.format.to_uppercase(), e.note)
                         };
-                        ListItem::new(Line::from(vec![
+                        let mut spans = vec![
                             Span::raw("  "),
                             Span::styled(format!("{:<26}", e.name), Style::default().fg(DIM)),
                             Span::styled(tail, Style::default().fg(DIM)),
-                        ]))
+                        ];
+                        if e.supported && !e.hw_ok {
+                            spans.push(Span::styled(
+                                "  ⚠ exceeds this Mac's memory",
+                                Style::default().fg(Color::Yellow),
+                            ));
+                        }
+                        ListItem::new(Line::from(spans))
                     }
                 })
                 .collect(),

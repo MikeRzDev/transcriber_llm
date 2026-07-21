@@ -39,11 +39,18 @@ pub(super) fn draw_model_picker(frame: &mut Frame, app: &App) {
                 .map(|s| s.path == m.path)
                 .unwrap_or(false);
             let marker = if selected_marker { "● " } else { "  " };
-            ListItem::new(Line::from(vec![
+            let mut spans = vec![
                 Span::styled(marker, Style::default().fg(ACCENT)),
                 Span::raw(m.display_name()),
                 Span::styled(format!("  {}", m.size_human()), Style::default().fg(DIM)),
-            ]))
+            ];
+            if !crate::hw::fits(m.size_bytes) {
+                spans.push(Span::styled(
+                    "  ⚠ exceeds this Mac's memory",
+                    Style::default().fg(Color::Yellow),
+                ));
+            }
+            ListItem::new(Line::from(spans))
         })
         .collect();
 

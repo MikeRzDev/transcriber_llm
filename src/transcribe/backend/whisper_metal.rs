@@ -170,7 +170,18 @@ fn build_params<'a>(
     events: &Sender<Event>,
     cancel: &Arc<AtomicBool>,
 ) -> FullParams<'a, 'static> {
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    // best_of > 1 gives the temperature fallback real candidates when a
+    // window trips the entropy threshold; with a single sample the retry
+    // re-enters the same repetition loop it was meant to escape.
+    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
+    // Without this, each 30s window is conditioned on the text decoded
+    // so far (whisper.cpp gates that on n_max_text_ctx > 0), so one
+    // hallucinated repetition loop propagates through every remaining
+    // window until end of file. no_context alone does NOT cover this —
+    // it only clears context carried across whisper_full calls, which
+    // matters for multi-chunk jobs reusing one state.
+    params.set_n_max_text_ctx(0);
+    params.set_no_context(true);
     params.set_tdrz_enable(diarize);
     params.set_language(Some(language));
     params.set_print_special(false);

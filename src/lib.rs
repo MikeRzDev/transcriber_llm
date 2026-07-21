@@ -11,6 +11,7 @@ pub mod export;
 pub mod format;
 pub mod headless;
 pub mod hub;
+pub mod hw;
 pub mod models;
 pub mod pyrt;
 pub mod split;
