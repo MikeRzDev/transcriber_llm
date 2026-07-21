@@ -8,7 +8,8 @@ mod api;
 mod download;
 
 pub use api::{list_files, search};
-pub use download::{download, download_dir};
+pub use download::{download, download_as, download_dir};
+pub(crate) use download::{stream_file, FileOutcome};
 
 use std::path::{Path, PathBuf};
 
@@ -219,7 +220,15 @@ mod tests {
     #[test]
     fn suggested_json_parses_and_supported_entries_are_models() {
         let models = suggested_models();
-        assert_eq!(models.len(), 3);
+        assert_eq!(models.len(), 4);
+        // The tdrz model backing the TinyDiarize strategy is offered here
+        // because its repo is untagged on HF (search can't find it)
+        let tdrz = models
+            .iter()
+            .find(|m| m.file == crate::diarize::TDRZ_FILE)
+            .expect("tdrz suggestion present");
+        assert_eq!(tdrz.repo, crate::diarize::TDRZ_REPO);
+        assert!(crate::models::is_tdrz(&tdrz.file));
         // whisper-large-v3 mapped to its GGML build, as a single file
         let whisper = models
             .iter()

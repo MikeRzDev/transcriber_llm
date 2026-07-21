@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
-use crate::app::{App, Download, HubList};
+use crate::app::{App, Download, EntryKind, HubList};
 use crate::format::{fmt_count, human_size};
 use crate::hub;
 use crate::ui::layout::centered_rect;
@@ -213,6 +213,39 @@ fn list_content<'a>(app: &'a App, visible: &HubList<'a>) -> (String, Vec<ListIte
             entries
                 .iter()
                 .map(|e| {
+                    // The diarization section: a dim header, then catalog
+                    // components (✓ marks the one its role currently uses).
+                    if e.kind == EntryKind::Section {
+                        return ListItem::new(Line::from(Span::styled(
+                            format!(" ── {} ──", e.name),
+                            Style::default().fg(DIM),
+                        )));
+                    }
+                    if e.kind == EntryKind::Diarize {
+                        if let Some(d) = active_download(app, &e.file) {
+                            return downloading_row(e.name, 26, &e.size, d);
+                        }
+                        let text = if e.installed {
+                            Style::default().fg(Color::White)
+                        } else {
+                            Style::default().fg(DIM)
+                        };
+                        let marker = if e.active && e.installed {
+                            Span::styled("✓ ", Style::default().fg(Color::Green))
+                        } else if e.active {
+                            // Would be used, but still needs downloading
+                            Span::styled("· ", Style::default().fg(Color::Yellow))
+                        } else {
+                            Span::raw("  ")
+                        };
+                        return ListItem::new(Line::from(vec![
+                            marker,
+                            Span::styled(format!("{:<26}", e.name), text),
+                            Span::styled(format!("{:>9}  ", e.size), text),
+                            Span::styled(e.format, Style::default().fg(Color::Magenta)),
+                            Span::styled(format!("  {}", e.note), Style::default().fg(DIM)),
+                        ]));
+                    }
                     // Directory models run on the MLX engine, not Metal/whisper
                     let engine_tag = if e.is_dir { "MLX" } else { metal_tag };
                     if let Some(d) = active_download(app, &e.file) {

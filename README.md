@@ -71,7 +71,8 @@ Drop any audio or video file from Finder onto the terminal window and the start-
 | `Enter` | Open directory / transcribe selected file (a confirmation dialog shows the file, model, and export formats before every job) |
 | `m` | Model picker (lists `.bin`/`.gguf` files and MLX model folders in the models folder) |
 | `s` | Settings: default model, models & output folders (via a built-in directory browser), export formats, model management, diarization, split mode, language (persisted) |
-| `d` | Toggle speaker diarization for the next transcription |
+| `d` | Cycle the diarization strategy (off → auto → tinydiarize → embeddings) |
+| `n` | Name the detected speakers (voice sample per speaker, re-exports on close) |
 | `l` | Toggle the right pane between the **job log** (the default view) and the transcript. The log is a timestamped record of everything since the first file was loaded: file selection, model load, audio extraction, engine output, every segment, exports, errors (10k-line ring buffer, virtualized rendering, `j k`/`g`/`G` scroll with live follow) |
 | `e` | Export the job log to `<output folder>/logs/log_<YYYYMMDD_HHMMSS>.log` — works at any time, including mid-job |
 | `x` | Clear the job log |
@@ -89,11 +90,21 @@ After every successful transcription, the selected formats are written automatic
 
 `<name>.segments.json` carries the same content at segment granularity for programmatic pipelines, plus plain `.txt` and `.srt`.
 
-## Speaker diarization (2-person conversations)
+## Speaker diarization (strategy-based)
 
-Optional and decided **before** transcription: toggle with `d` (or in settings; persisted). It uses whisper.cpp's native [tinydiarize](https://github.com/akashmjn/tinydiarize) turn detection via the `ggml-small.en-tdrz.bin` model (English only) — download it manually from [huggingface.co/akashmjn/tinydiarize-whisper.cpp](https://huggingface.co/akashmjn/tinydiarize-whisper.cpp) into the models folder; its repo is untagged on Hugging Face, so the in-app speech-to-text search won't list it. When on, the run automatically switches to the tdrz model, and detected turns alternate **Speaker A / Speaker B** labels — the right assumption for two-person conversations. Labels flow into the TUI (colored), `llm.md` (speaker-prefixed paragraphs and honest `diarization:` metadata for the LLM), JSON, SRT and TXT.
+Diarization is a pluggable strategy, cycled with `d` (or in settings; persisted): **Off → Auto → TinyDiarize → Speaker embeddings**. `Auto` picks the recommended strategy for the model in use — a tdrz model brings its own turn tokens, everything else gets the embedding pipeline. Whatever a strategy still needs is spelled out — with sizes — in the status line when you select it, and again in the pre-transcription confirmation dialog; nothing downloads silently.
 
-Caveats, stated in the export too: A/B are consistent but arbitrary (A = whoever speaks first), missed turns merge speakers, and turn detection is tuned for real conversational speech — synthetic TTS audio often yields no turns (verified identical to reference whisper.cpp behavior).
+- **TinyDiarize** — whisper.cpp's native [tinydiarize](https://github.com/akashmjn/tinydiarize) turn detection: transcribes with the `ggml-small.en-tdrz.bin` model (488 MB, English only, available under Model management's suggestions since its repo is untagged on HF search). Detected turns alternate **Speaker A / Speaker B** — the right assumption for two-person conversations. A/B are consistent but arbitrary (A = whoever speaks first), missed turns merge speakers, and turn detection is tuned for real conversational speech — synthetic TTS audio often yields no turns.
+- **Speaker embeddings** — engine-agnostic, works with **any** model (whisper.cpp and MLX alike) and any number of speakers: pyannote-style segmentation plus speaker-embedding clustering, run fully offline by [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) — no PyTorch, no account. It runs as a post-pass in the worker: the engine transcribes as usual, then the diarizer decodes the same audio, finds speaker turns, and labels each segment by overlap. Self-provisioning on first use (like the MLX runtime): the sherpa-onnx wheel pip-installs into the app venv (~25 MB) and the active ONNX models download into `<models>/diarization/` with live progress. Cancel or failure downgrades gracefully — the finished transcript is kept, just unlabeled.
+- Models that label speakers natively (some MLX models emit `speaker_id`) keep their own labels; the post-pass steps aside.
+
+**Diarization model catalog** — Model management (`s` → Model management) has a *diarization* section listing the interchangeable pipeline components, downloaded into `<models>/diarization/`: segmentation (pyannote segmentation-3.0 6 MB — default; Rev reverb-diarization-v1 10 MB, English, non-commercial license) and speaker embeddings (NeMo TitaNet-S 40 MB — default; TitaNet-L 101 MB higher quality; WeSpeaker CAM++ 29 MB; 3D-Speaker CAM++ zh+en 28 MB for Chinese/English). Enter downloads a missing component or makes an installed one the active choice for its role (✓); Del removes it. A freshly downloaded component becomes active automatically.
+
+**Speaker count** — Settings → *Speakers*: auto-detect by default, or enter the known number of speakers (1–26) to pin the clustering to exactly that count — when you know it, labels get noticeably better. Headless: `--speakers N`.
+
+**Naming speakers** — after a diarized transcription, press `n`: every detected speaker is listed with a voice sample (their longest utterance, `p` plays it via afplay), and Enter assigns a real name — George, Marco, Sarah. Names replace the anonymous letters in the TUI and in every export (with a `speakers: Speaker A = George, …` frontmatter line in `llm.md`); closing the dialog re-exports automatically if anything changed.
+
+Labels flow into the TUI (colored per speaker), `llm.md` (speaker-prefixed paragraphs and honest `diarization:` metadata naming the method for the LLM), JSON, SRT and TXT. Headless: `--diarize [off|auto|tdrz|embedding]` (bare `--diarize` = auto).
 
 ## Long audio & split mode
 

@@ -12,13 +12,21 @@ pub use worker::{spawn, Transcriber};
 
 use std::path::PathBuf;
 
+use crate::diarize::{DiarizeMethod, DiarizeModelChoice};
 use crate::split::SplitMode;
 
 pub struct Job {
     pub model: PathBuf,
     pub audio: PathBuf,
-    /// Label speaker turns (only effective with a tdrz model)
-    pub diarize: bool,
+    /// Resolved diarization method: tdrz runs inline in the whisper
+    /// engine, the embedding pipeline as a worker post-pass over any
+    /// engine's output
+    pub diarize: DiarizeMethod,
+    /// Which catalog models the embedding pipeline uses (defaults apply
+    /// when unset); irrelevant for the other methods
+    pub diarize_models: DiarizeModelChoice,
+    /// Known speaker count for the embedding pipeline; None = auto-detect
+    pub diarize_speakers: Option<u8>,
     /// ISO 639-1 hint; None = auto-detect
     pub language: Option<String>,
     /// Client-side chunking strategy for long audio
@@ -30,26 +38,9 @@ pub struct Segment {
     pub start_ms: i64,
     pub end_ms: i64,
     pub text: String,
-    /// Speaker index (0 = A, 1 = B) from tinydiarize turn detection;
-    /// None when the model doesn't diarize.
+    /// Speaker index (0 = A, 1 = B, …) from diarization; None when no
+    /// diarizer labeled this segment.
     pub speaker: Option<u8>,
-}
-
-/// Assign alternating speaker indices from per-segment "next segment is a
-/// new speaker" flags. Assumes a two-person conversation: every detected
-/// turn flips between speaker 0 and speaker 1.
-pub fn alternate_speakers(turn_after: &[bool]) -> Vec<u8> {
-    let mut current = 0u8;
-    turn_after
-        .iter()
-        .map(|&turn| {
-            let speaker = current;
-            if turn {
-                current = 1 - current;
-            }
-            speaker
-        })
-        .collect()
 }
 
 #[derive(Debug)]
@@ -84,7 +75,7 @@ pub enum Event {
     EngineHeartbeat(u64),
     Segment(Segment),
     /// Re-issued full transcript with speaker labels, sent after a
-    /// tinydiarize run completes (streamed segments carry no speaker).
+    /// diarization pass completes (streamed segments carry no speaker).
     SegmentsFinal(Vec<Segment>),
     Done {
         elapsed_secs: f32,
@@ -109,19 +100,5 @@ mod tests {
         transcriber.request_unload();
         transcriber.request_unload();
         transcriber.shutdown();
-    }
-
-    #[test]
-    fn no_turns_is_all_speaker_a() {
-        assert_eq!(alternate_speakers(&[false, false, false]), vec![0, 0, 0]);
-    }
-
-    #[test]
-    fn turns_alternate_between_two_speakers() {
-        // turn flag means the NEXT segment has a new speaker
-        assert_eq!(
-            alternate_speakers(&[true, false, true, true, false]),
-            vec![0, 1, 1, 0, 1]
-        );
     }
 }

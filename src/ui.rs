@@ -10,6 +10,7 @@ mod layout;
 mod log;
 mod model_picker;
 mod move_prompt;
+mod naming;
 mod settings;
 mod start_prompt;
 mod status;
@@ -57,6 +58,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
     if app.settings.move_prompt.is_some() {
         move_prompt::draw_move_prompt(frame, app);
+    }
+    if app.naming.is_some() {
+        naming::draw_speaker_naming(frame, app);
     }
     // Topmost: it can open over any other modal (e.g. a file dropped
     // while the hub is up) and its keys take priority

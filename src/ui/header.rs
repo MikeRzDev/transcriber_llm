@@ -22,8 +22,11 @@ pub(super) fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         Span::raw("  "),
         Span::styled(model, Style::default().fg(ACCENT)),
         Span::styled("  •  Metal GPU", Style::default().fg(DIM)),
-        if app.config.diarize {
-            Span::styled("  •  diarize", Style::default().fg(Color::Magenta))
+        if app.config.diarize != crate::diarize::DiarizeStrategy::Off {
+            Span::styled(
+                format!("  •  diarize: {}", app.config.diarize.key()),
+                Style::default().fg(Color::Magenta),
+            )
         } else {
             Span::raw("")
         },

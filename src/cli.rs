@@ -19,9 +19,23 @@ pub struct Args {
     #[arg(long)]
     pub headless: bool,
 
-    /// Label speaker turns (requires a tdrz model, English)
-    #[arg(long)]
-    pub diarize: bool,
+    /// Diarization strategy: off, auto (recommended per model), tdrz
+    /// (tinydiarize, 2 speakers, English), embedding (any model,
+    /// multi-speaker). Bare --diarize means auto; pass a strategy as
+    /// --diarize=embedding (the = keeps the audio path unambiguous).
+    #[arg(
+        long,
+        value_name = "STRATEGY",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "auto"
+    )]
+    pub diarize: Option<String>,
+
+    /// Known speaker count for embedding diarization (pins the
+    /// clustering); default: auto-detect
+    #[arg(long, value_name = "N")]
+    pub speakers: Option<u8>,
 
     /// Language hint (ISO 639-1, e.g. en, es); default: auto-detect
     #[arg(short, long, value_name = "CODE")]

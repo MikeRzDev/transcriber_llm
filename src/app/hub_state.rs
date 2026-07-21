@@ -10,6 +10,7 @@ use crossterm::event::KeyCode;
 
 use crate::app::App;
 use crate::config;
+use crate::diarize::sherpa::{self, DiarizeRole};
 use crate::hub::{self, DirVariant, HubEvent, HubFile, RepoHit, SuggestedModel};
 
 /// One repo's downloadables: directory-model variants first, then its
@@ -66,6 +67,9 @@ pub struct Download {
     pub is_dir: bool,
     /// Variant subfolder for directory downloads ("" = the whole repo)
     pub subdir: String,
+    /// Where the download lands: the models folder, or its diarization
+    /// subfolder for diarization components
+    pub dest_dir: PathBuf,
     pub got: u64,
     pub total: u64,
     pub paused: bool,
@@ -97,9 +101,21 @@ impl HubList<'_> {
     }
 }
 
-/// One row of the default hub view: either a model already on disk or a
-/// curated suggestion still to be downloaded.
+/// What a default-view row is: a transcription model, the diarization
+/// section header, or a diarization component.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryKind {
+    Model,
+    Section,
+    Diarize,
+}
+
+/// One row of the default hub view: a model already on disk, a curated
+/// suggestion still to be downloaded, or a diarization catalog entry.
 pub struct DefaultEntry<'a> {
+    pub kind: EntryKind,
+    /// Diarize rows only: this component is the one its role uses
+    pub active: bool,
     /// Friendly display name (the suggestion's name, else the file name)
     pub name: &'a str,
     /// On-disk name — the download destination and library match key
@@ -165,6 +181,8 @@ impl App {
         for m in &self.library.models {
             let sug = self.hub.suggested.iter().find(|s| s.dest_name() == m.name);
             entries.push(DefaultEntry {
+                kind: EntryKind::Model,
+                active: false,
                 name: sug.map_or(m.name.as_str(), |s| s.name.as_str()),
                 file: m.name.clone(),
                 repo: None,
@@ -182,6 +200,8 @@ impl App {
                 continue; // already listed among the downloaded models above
             }
             entries.push(DefaultEntry {
+                kind: EntryKind::Model,
+                active: false,
                 name: &s.name,
                 file: dest,
                 repo: Some(&s.repo),
@@ -191,6 +211,42 @@ impl App {
                 is_dir: s.is_dir_model(),
                 supported: s.supported(),
                 installed: false,
+            });
+        }
+        // The diarization category: the embedding pipeline's components
+        // (usable with any transcription model), stored under
+        // <models>/diarization. Enter downloads a missing one or makes an
+        // installed one its role's active choice.
+        entries.push(DefaultEntry {
+            kind: EntryKind::Section,
+            active: false,
+            name: "diarization — ✓ = in use · Enter downloads / selects",
+            file: String::new(),
+            repo: None,
+            size: String::new(),
+            note: "",
+            format: "",
+            is_dir: false,
+            supported: true,
+            installed: false,
+        });
+        for m in &sherpa::CATALOG {
+            let configured = match m.role {
+                DiarizeRole::Segmentation => self.config.diarize_models.segmentation.as_deref(),
+                DiarizeRole::Embedding => self.config.diarize_models.embedding.as_deref(),
+            };
+            entries.push(DefaultEntry {
+                kind: EntryKind::Diarize,
+                active: sherpa::pick(m.role, configured).local == m.local,
+                name: m.label,
+                file: m.local.to_string(),
+                repo: Some(m.repo),
+                size: m.size.to_string(),
+                note: m.note,
+                format: m.role.label(),
+                is_dir: false,
+                supported: true,
+                installed: m.installed(&self.library.dir),
             });
         }
         entries
@@ -314,10 +370,12 @@ impl App {
             }
             return;
         }
-        // Default view: select a downloaded model as the default, or start a
-        // download for a suggestion that isn't on disk yet.
+        // Default view: select a downloaded model as the default, start a
+        // download for a suggestion that isn't on disk yet, or — in the
+        // diarization section — download a component / make it active.
         let action = self.hub_default_entries().get(self.hub.selected).map(|e| {
             (
+                e.kind,
                 e.installed,
                 e.supported,
                 e.is_dir,
@@ -327,26 +385,100 @@ impl App {
                 e.format.to_string(),
             )
         });
-        if let Some((installed, supported, is_dir, repo, file, name, format)) = action {
-            if installed {
-                if let Some(model) = self.library.models.iter().find(|m| m.name == file).cloned() {
-                    self.choose_model(model);
-                    self.hub.info = format!("Selected {file} as the default model");
+        let Some((kind, installed, supported, is_dir, repo, file, name, format)) = action else {
+            return;
+        };
+        match kind {
+            EntryKind::Section => {}
+            EntryKind::Diarize => {
+                if installed {
+                    self.set_active_diarize_model(&file);
+                } else if let Some(repo) = repo {
+                    self.hub_start_diarize_download(repo, file);
                 }
-            } else if !supported {
-                self.hub.info = if format == "mlx" {
-                    format!("{name} is an MLX model — it needs an Apple Silicon Mac")
-                } else {
-                    format!("{name} is {format}-format — no engine here can run it")
-                };
-            } else if let Some(repo) = repo {
-                if is_dir {
-                    self.hub_start_dir_download(repo, String::new());
-                } else {
-                    self.hub_start_download(repo, file);
+            }
+            EntryKind::Model => {
+                if installed {
+                    if let Some(model) =
+                        self.library.models.iter().find(|m| m.name == file).cloned()
+                    {
+                        self.choose_model(model);
+                        self.hub.info = format!("Selected {file} as the default model");
+                    }
+                } else if !supported {
+                    self.hub.info = if format == "mlx" {
+                        format!("{name} is an MLX model — it needs an Apple Silicon Mac")
+                    } else {
+                        format!("{name} is {format}-format — no engine here can run it")
+                    };
+                } else if let Some(repo) = repo {
+                    if is_dir {
+                        self.hub_start_dir_download(repo, String::new());
+                    } else {
+                        self.hub_start_download(repo, file);
+                    }
                 }
             }
         }
+    }
+
+    /// Make an installed diarization component the one its role uses,
+    /// and persist the choice.
+    fn set_active_diarize_model(&mut self, local: &str) {
+        let Some(model) = sherpa::CATALOG.iter().find(|m| m.local == local) else {
+            return;
+        };
+        match model.role {
+            DiarizeRole::Segmentation => {
+                self.config.diarize_models.segmentation = Some(local.to_string())
+            }
+            DiarizeRole::Embedding => {
+                self.config.diarize_models.embedding = Some(local.to_string())
+            }
+        }
+        let _ = config::save(&self.config);
+        self.hub.info = format!(
+            "Diarization now uses {} for {}",
+            model.label,
+            model.role.label()
+        );
+    }
+
+    /// Download a diarization component into `<models>/diarization`
+    /// under its catalog name.
+    fn hub_start_diarize_download(&mut self, repo: String, local: String) {
+        let Some(model) = sherpa::CATALOG.iter().find(|m| m.local == local) else {
+            return;
+        };
+        let dest_dir = sherpa::dir(&self.library.dir);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+        self.hub.download = Some(Download {
+            file: local.clone(),
+            repo: repo.clone(),
+            remote_file: model.remote.to_string(),
+            is_dir: false,
+            subdir: String::new(),
+            dest_dir: dest_dir.clone(),
+            got: 0,
+            total: 0,
+            paused: false,
+            cancel: cancel.clone(),
+            pause: pause.clone(),
+        });
+        self.hub.info = format!(
+            "Downloading {local} ({})… — p pauses · Esc cancels",
+            model.size
+        );
+        hub::download_as(
+            repo,
+            model.remote.to_string(),
+            local,
+            dest_dir,
+            cancel,
+            pause,
+            self.hub_tx.clone(),
+        );
     }
 
     fn hub_start_download(&mut self, repo: String, file: String) {
@@ -366,6 +498,7 @@ impl App {
             remote_file: file.clone(),
             is_dir: false,
             subdir: String::new(),
+            dest_dir: self.library.dir.clone(),
             got: 0,
             total: 0,
             paused: false,
@@ -395,6 +528,7 @@ impl App {
             remote_file: String::new(),
             is_dir: true,
             subdir: subdir.clone(),
+            dest_dir: self.library.dir.clone(),
             got: 0,
             total: 0,
             paused: false,
@@ -425,6 +559,7 @@ impl App {
             let file = d.file.clone();
             let is_dir = d.is_dir;
             let subdir = d.subdir.clone();
+            let dest_dir = d.dest_dir.clone();
             let cancel = Arc::new(AtomicBool::new(false));
             let pause = Arc::new(AtomicBool::new(false));
             if let Some(d) = &mut self.hub.download {
@@ -434,19 +569,15 @@ impl App {
             }
             self.hub.info = format!("Resuming {file}… — p pauses · Esc cancels");
             if is_dir {
-                hub::download_dir(
-                    repo,
-                    subdir,
-                    self.library.dir.clone(),
-                    cancel,
-                    pause,
-                    self.hub_tx.clone(),
-                );
+                hub::download_dir(repo, subdir, dest_dir, cancel, pause, self.hub_tx.clone());
             } else {
-                hub::download(
+                // download_as: the local name must survive the resume
+                // (diarization components rename generic remote files)
+                hub::download_as(
                     repo,
                     remote_file,
-                    self.library.dir.clone(),
+                    file,
+                    dest_dir,
                     cancel,
                     pause,
                     self.hub_tx.clone(),
@@ -467,7 +598,7 @@ impl App {
         if d.paused {
             // No worker is running — clean up the partial data directly.
             let name = d.file.clone();
-            let part = self.library.dir.join(format!("{name}.part"));
+            let part = d.dest_dir.join(format!("{name}.part"));
             if d.is_dir {
                 let _ = std::fs::remove_dir_all(part);
             } else {
@@ -481,8 +612,8 @@ impl App {
         }
     }
 
-    /// Open the delete confirmation for the selected row — only downloaded
-    /// models (shown in the default view) can be deleted.
+    /// Open the delete confirmation for the selected row — downloaded
+    /// models and diarization components (default view) can be deleted.
     fn hub_request_delete(&mut self) {
         if self.hub.files.is_some() || self.hub.results.is_some() || self.hub.download.is_some() {
             return;
@@ -490,12 +621,26 @@ impl App {
         let target = self
             .hub_default_entries()
             .get(self.hub.selected)
-            .map(|e| (e.installed, e.file.clone(), e.name.to_string()));
-        let Some((installed, file, name)) = target else {
+            .map(|e| (e.kind, e.installed, e.file.clone(), e.name.to_string()));
+        let Some((kind, installed, file, name)) = target else {
             return;
         };
+        if kind == EntryKind::Section {
+            return;
+        }
         if !installed {
             self.hub.info = format!("{name} isn't downloaded — nothing to delete");
+            return;
+        }
+        if kind == EntryKind::Diarize {
+            let path = sherpa::dir(&self.library.dir).join(&file);
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            self.hub.delete_prompt = Some(DeletePrompt {
+                name: file,
+                path,
+                size,
+                yes_selected: false,
+            });
             return;
         }
         if let Some(model) = self.library.models.iter().find(|m| m.name == file) {
@@ -636,11 +781,20 @@ impl App {
             HubEvent::Done { file, path } => {
                 self.hub.download = None;
                 self.refresh_models();
-                self.hub.info = format!("Downloaded {file} ✓");
-                self.status = format!("Downloaded {file} to {}", self.library.dir.display());
-                if self.library.selected.is_none() {
-                    self.library.selected =
-                        self.library.models.iter().find(|m| m.path == path).cloned();
+                if let Some(model) = sherpa::CATALOG.iter().find(|m| m.local == file) {
+                    // A finished diarization component becomes its role's
+                    // active choice — it was downloaded to be used.
+                    self.set_active_diarize_model(model.local);
+                    self.hub.info =
+                        format!("Downloaded {file} ✓ — now the active {}", model.role.label());
+                    self.status = self.hub.info.clone();
+                } else {
+                    self.hub.info = format!("Downloaded {file} ✓");
+                    self.status = format!("Downloaded {file} to {}", self.library.dir.display());
+                    if self.library.selected.is_none() {
+                        self.library.selected =
+                            self.library.models.iter().find(|m| m.path == path).cloned();
+                    }
                 }
             }
             HubEvent::Cancelled { file } => {

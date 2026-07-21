@@ -1,5 +1,5 @@
 use ratatui::layout::{Alignment, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
@@ -36,10 +36,13 @@ fn transcript_lines(transcript: &TranscriptState, text_width: usize) -> Vec<Line
             clock_time(seg.end_ms)
         );
         let speaker = seg.speaker.map(|s| {
-            (
-                format!("{}: ", if s == 0 { "A" } else { "B" }),
-                if s == 0 { Color::Cyan } else { Color::Magenta },
-            )
+            // Assigned name if the user labeled this speaker, else the letter
+            let tag = transcript
+                .speaker_names
+                .get(&s)
+                .cloned()
+                .unwrap_or_else(|| ((b'A' + s.min(25)) as char).to_string());
+            (format!("{tag}: "), crate::ui::theme::speaker_color(s))
         });
         let prefix_len = stamp.len() + speaker.as_ref().map(|(t, _)| t.len()).unwrap_or(0);
         let indent = " ".repeat(prefix_len);

@@ -1,5 +1,6 @@
 //! Transcript pane state: streamed segments and scroll/follow behavior.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::transcribe::Segment;
@@ -16,6 +17,12 @@ pub struct TranscriptState {
     pub language: Option<String>,
     /// Model that produced the transcript, for the export header
     pub model_name: Option<String>,
+    /// How speaker labels were produced (diarization method), for the
+    /// export header; None when diarization was off
+    pub diarization: Option<String>,
+    /// Human names assigned to speaker indices via the naming dialog
+    /// (`n`); empty = anonymous A/B/C labels
+    pub speaker_names: BTreeMap<u8, String>,
 }
 
 impl TranscriptState {
@@ -28,17 +35,21 @@ impl TranscriptState {
             duration_secs: None,
             language: None,
             model_name: None,
+            diarization: None,
+            speaker_names: BTreeMap::new(),
         }
     }
 
     /// Reset for a new transcription job.
-    pub fn begin(&mut self, source: PathBuf, model_name: String) {
+    pub fn begin(&mut self, source: PathBuf, model_name: String, diarization: Option<String>) {
         self.segments.clear();
         self.scroll = 0;
         self.follow = true;
         self.duration_secs = None;
         self.language = None;
         self.model_name = Some(model_name);
+        self.diarization = diarization;
+        self.speaker_names.clear();
         self.source = Some(source);
     }
 

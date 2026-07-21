@@ -20,3 +20,17 @@ pub fn highlight_style() -> Style {
         .fg(Color::Black)
         .add_modifier(Modifier::BOLD)
 }
+
+/// One consistent color per diarized speaker index, shared by the
+/// transcript pane and the naming dialog; cycles past the palette.
+pub fn speaker_color(speaker: u8) -> Color {
+    const PALETTE: [Color; 6] = [
+        Color::Cyan,
+        Color::Magenta,
+        Color::Green,
+        Color::Yellow,
+        Color::Blue,
+        Color::LightRed,
+    ];
+    PALETTE[speaker as usize % PALETTE.len()]
+}

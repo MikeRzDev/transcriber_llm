@@ -20,18 +20,20 @@ pub enum SettingsRow {
     ExportFormats,
     ModelManagement,
     Diarize,
+    DiarizeSpeakers,
     SplitMode,
     Language,
 }
 
 impl SettingsRow {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::DefaultModel,
         Self::ModelsFolder,
         Self::OutputFolder,
         Self::ExportFormats,
         Self::ModelManagement,
         Self::Diarize,
+        Self::DiarizeSpeakers,
         Self::SplitMode,
         Self::Language,
     ];
@@ -54,6 +56,8 @@ pub struct SettingsUi {
     pub selected: SettingsRow,
     /// Some(text) while the language code is being edited
     pub language_input: Option<String>,
+    /// Some(text) while the diarization speaker count is being edited
+    pub speakers_input: Option<String>,
     /// Some while a folder is being chosen via the directory browser
     pub dir_picker: Option<DirPicker>,
     /// Some while asking whether to move models into the new folder
@@ -68,6 +72,7 @@ impl SettingsUi {
             open: false,
             selected: SettingsRow::DefaultModel,
             language_input: None,
+            speakers_input: None,
             dir_picker: None,
             move_prompt: None,
             formats_cursor: None,
@@ -191,6 +196,21 @@ impl App {
             }
             return;
         }
+        if let Some(input) = &mut self.settings.speakers_input {
+            match code {
+                KeyCode::Char(c) if c.is_ascii_digit() && input.len() < 2 => input.push(c),
+                KeyCode::Backspace => {
+                    input.pop();
+                }
+                KeyCode::Enter => {
+                    let text = self.settings.speakers_input.take().unwrap_or_default();
+                    self.set_diarize_speakers(&text);
+                }
+                KeyCode::Esc => self.settings.speakers_input = None,
+                _ => {}
+            }
+            return;
+        }
         if let Some(input) = &mut self.settings.language_input {
             match code {
                 KeyCode::Char(c) => input.push(c),
@@ -225,7 +245,15 @@ impl App {
                     self.settings.open = false;
                     self.open_hub();
                 }
-                SettingsRow::Diarize => self.toggle_diarize(),
+                SettingsRow::Diarize => self.cycle_diarize(),
+                SettingsRow::DiarizeSpeakers => {
+                    self.settings.speakers_input = Some(
+                        self.config
+                            .diarize_speakers
+                            .map(|n| n.to_string())
+                            .unwrap_or_default(),
+                    )
+                }
                 SettingsRow::SplitMode => self.cycle_split_mode(),
                 SettingsRow::Language => {
                     self.settings.language_input =
@@ -236,18 +264,60 @@ impl App {
         }
     }
 
-    /// Toggle diarization and persist the choice.
-    pub fn toggle_diarize(&mut self) {
-        self.config.diarize = !self.config.diarize;
+    /// Cycle the diarization strategy (off → auto → tinydiarize →
+    /// embeddings) and persist it. The status line spells out what the
+    /// new strategy resolves to for the current model and what — if
+    /// anything — still has to be downloaded before it can run.
+    pub fn cycle_diarize(&mut self) {
+        self.config.diarize = self.config.diarize.next();
         let _ = config::save(&self.config);
-        self.status = if self.config.diarize {
-            match self.find_tdrz_model() {
-                Some(m) => format!("Diarization ON — conversations will use {}", m.name),
-                None => "Diarization ON, but no tdrz model found — get ggml-small.en-tdrz.bin from huggingface.co/akashmjn/tinydiarize-whisper.cpp into the models folder".into(),
-            }
+        self.status = self.diarize_status();
+    }
+
+    /// Set the known speaker count for the embedding diarizer. Empty or
+    /// zero means auto-detect; a fixed count pins the clustering to
+    /// exactly that many speakers, which improves labels when the count
+    /// really is known.
+    pub fn set_diarize_speakers(&mut self, input: &str) {
+        let text = input.trim();
+        if text.is_empty() || text == "0" {
+            self.config.diarize_speakers = None;
+            self.status = "Diarization speakers: auto-detect".into();
         } else {
-            "Diarization OFF".into()
-        };
+            match text.parse::<u8>() {
+                // Speaker labels run A–Z; more than 26 has no labeling
+                Ok(n) if (1..=26).contains(&n) => {
+                    self.config.diarize_speakers = Some(n);
+                    self.status = format!(
+                        "Diarization speakers: exactly {n} (embedding strategy; \
+                         clustering is pinned to this count)"
+                    );
+                }
+                _ => {
+                    self.status = format!("Speaker count must be 1–26 (or empty for auto): {text}");
+                    return;
+                }
+            }
+        }
+        let _ = config::save(&self.config);
+    }
+
+    fn diarize_status(&self) -> String {
+        use crate::diarize::DiarizeStrategy;
+        let strategy = self.config.diarize;
+        if strategy == DiarizeStrategy::Off {
+            return "Diarization OFF".into();
+        }
+        let (method, note) = self.diarize_plan();
+        let mut status = format!("Diarization {}", strategy.label());
+        if strategy == DiarizeStrategy::Auto {
+            status.push_str(&format!(" → {}", method.label()));
+        }
+        match note {
+            Some(note) => status.push_str(&format!(" — {note}")),
+            None => status.push_str(" — ready"),
+        }
+        status
     }
 
     /// Set the transcription language ("auto" or an ISO 639-1 code),

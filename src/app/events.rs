@@ -130,10 +130,15 @@ impl App {
                 let rtf = elapsed_secs / audio_secs.max(0.001);
                 let lang = language.as_deref().unwrap_or("?").to_string();
                 self.transcript.language = language;
-                let spoken = if self.transcript.segments.iter().any(|s| s.speaker.is_some()) {
-                    " · 2 speakers labeled"
-                } else {
-                    ""
+                let speakers: std::collections::BTreeSet<u8> = self
+                    .transcript
+                    .segments
+                    .iter()
+                    .filter_map(|s| s.speaker)
+                    .collect();
+                let spoken = match speakers.len() {
+                    0 => String::new(),
+                    n => format!(" · {n} speaker(s) labeled"),
                 };
                 let base = format!(
                     "Done in {elapsed_secs:.1}s ({rtf:.2}× realtime, lang: {lang}{spoken})"

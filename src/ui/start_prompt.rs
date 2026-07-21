@@ -47,7 +47,7 @@ pub(super) fn draw_start_prompt(frame: &mut Frame, app: &App) {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| prompt.audio.display().to_string());
 
-    let lines = vec![
+    let mut lines = vec![
         Line::raw(""),
         Line::from(vec![
             Span::styled("  file:    ", Style::default().fg(DIM)),
@@ -61,6 +61,25 @@ pub(super) fn draw_start_prompt(frame: &mut Frame, app: &App) {
             Span::styled("  exports: ", Style::default().fg(DIM)),
             Span::raw(formats),
         ]),
+        Line::from(vec![
+            Span::styled("  diarize: ", Style::default().fg(DIM)),
+            Span::raw(match (prompt.diarize, app.config.diarize_speakers) {
+                (crate::diarize::DiarizeMethod::Embedding, Some(n)) => {
+                    format!("{} · {n} speakers", prompt.diarize.label())
+                }
+                _ => prompt.diarize.label().to_string(),
+            }),
+        ]),
+    ];
+    // Nothing downloads silently: if the diarization method still needs
+    // pieces, the prompt says exactly what and how big before starting.
+    if let Some(note) = &prompt.diarize_note {
+        lines.push(Line::from(Span::styled(
+            format!("           {note}"),
+            Style::default().fg(Color::Yellow),
+        )));
+    }
+    lines.extend([
         Line::raw(""),
         Line::from(vec![
             Span::raw("  "),
@@ -73,7 +92,7 @@ pub(super) fn draw_start_prompt(frame: &mut Frame, app: &App) {
             "  ←→ choose · Enter confirm · y / n shortcuts · Esc cancel",
             Style::default().fg(DIM),
         )),
-    ];
+    ]);
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }

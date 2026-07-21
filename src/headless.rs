@@ -8,44 +8,72 @@ use std::sync::mpsc::channel;
 use anyhow::{bail, Result};
 
 use crate::cli::Args;
+use crate::diarize::{self, DiarizeMethod, DiarizeStrategy};
 use crate::format::{clock_time, human_size};
 use crate::transcribe::{Event, Job};
-use crate::{config, export, hub, models, split, transcribe};
-
-fn default_model(diarize: bool) -> Option<PathBuf> {
-    let cfg = config::load();
-    let found = models::scan_models(&config::resolve_models_dir(&cfg));
-    if diarize {
-        return found
-            .iter()
-            .find(|m| models::is_tdrz(&m.name))
-            .map(|m| m.path.clone());
-    }
-    models::pick_default(&found, cfg.default_model.as_deref()).map(|m| m.path.clone())
-}
+use crate::{config, export, hub, models, transcribe};
 
 pub fn run(args: &Args) -> Result<()> {
     let Some(audio) = args.path.clone() else {
         bail!("--headless requires an audio file path");
     };
-    let Some(model) = args.model.clone().or_else(|| default_model(args.diarize)) else {
+    let strategy = match args.diarize.as_deref() {
+        None => DiarizeStrategy::Off,
+        Some(s) => DiarizeStrategy::parse(s)
+            .ok_or_else(|| anyhow::anyhow!("unknown diarization strategy: {s} (use off, auto, tdrz, or embedding)"))?,
+    };
+
+    let mut cfg = config::load();
+    // A CLI speaker count overrides the configured one for this run
+    if args.speakers.is_some() {
+        cfg.diarize_speakers = args.speakers.filter(|n| *n > 0);
+    }
+    let models_dir = config::resolve_models_dir(&cfg);
+    let found = models::scan_models(&models_dir);
+    let model = args.model.clone().or_else(|| {
+        models::pick_default(&found, cfg.default_model.as_deref()).map(|m| m.path.clone())
+    });
+    let Some(model) = model else {
         bail!(
-            "no suitable model found in {} — {}",
-            config::resolve_models_dir(&config::load()).display(),
-            if args.diarize {
-                "get ggml-small.en-tdrz.bin from huggingface.co/akashmjn/tinydiarize-whisper.cpp"
-            } else {
-                "download one via Model management (s) or --download-test-model"
-            }
+            "no model found in {} — download one via Model management (s) or --download-test-model",
+            models_dir.display()
         );
     };
-    run_headless(
-        model,
-        audio,
-        args.diarize,
-        args.language.clone(),
-        config::load().split_mode,
-    )
+    let model_name = model
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    // Resolve the strategy against the model in use; the tdrz method
+    // transcribes with the tdrz model itself.
+    let method = strategy.resolve(Some(&model_name));
+    let model = if method == DiarizeMethod::Tdrz && !models::is_tdrz(&model_name) {
+        found
+            .iter()
+            .find(|m| models::is_tdrz(&m.name))
+            .map(|m| m.path.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "diarization ({}) needs {} ({}) from huggingface.co/{} in {}",
+                    strategy.label(),
+                    diarize::TDRZ_FILE,
+                    diarize::TDRZ_SIZE,
+                    diarize::TDRZ_REPO,
+                    models_dir.display()
+                )
+            })?
+    } else {
+        model
+    };
+    if method != DiarizeMethod::None {
+        eprintln!("diarization: {}", method.label());
+        if let Some(note) =
+            diarize::download_note(method, &found, &models_dir, &cfg.diarize_models)
+        {
+            eprintln!("diarization: {note}");
+        }
+    }
+    run_headless(model, audio, method, &cfg, args.language.clone())
 }
 
 /// Fetch the smallest whisper model into the models folder — enough for a
@@ -100,9 +128,9 @@ pub fn download_test_model() -> Result<()> {
 fn run_headless(
     model: PathBuf,
     audio: PathBuf,
-    diarize: bool,
+    diarize: DiarizeMethod,
+    cfg: &config::Config,
     language: Option<String>,
-    split_mode: split::SplitMode,
 ) -> Result<()> {
     eprintln!("model: {}", model.display());
     eprintln!("audio: {}", audio.display());
@@ -113,8 +141,10 @@ fn run_headless(
         model,
         audio,
         diarize,
+        diarize_models: cfg.diarize_models.clone(),
+        diarize_speakers: cfg.diarize_speakers,
         language,
-        split_mode,
+        split_mode: cfg.split_mode,
     });
 
     let result = run_headless_loop(rx);

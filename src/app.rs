@@ -9,15 +9,17 @@ mod hub_state;
 mod job_log;
 mod keys;
 mod library;
+mod naming;
 mod settings;
 mod transcript;
 
 pub(crate) use browser::file_name;
 pub use browser::{scroll_window, FileBrowser, FileEntry};
 pub use drop::DropDetector;
-pub use hub_state::{Download, HubList, HubState, RepoView};
+pub use hub_state::{DefaultEntry, Download, EntryKind, HubList, HubState, RepoView};
 pub use job_log::JobLog;
 pub use library::{ModelLibrary, ModelPicker};
+pub use naming::{NamingRow, SpeakerNaming};
 pub use settings::{DirPicker, DirRow, DirTarget, MovePrompt, SettingsRow, SettingsUi};
 pub use transcript::TranscriptState;
 
@@ -27,6 +29,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use anyhow::Result;
 
 use crate::config::{self, Config};
+use crate::diarize::{self, DiarizeMethod};
 use crate::export::TranscriptDoc;
 use crate::hub::HubEvent;
 use crate::models::{self, ModelFile};
@@ -60,6 +63,12 @@ pub enum WorkState {
 pub struct StartPrompt {
     pub audio: PathBuf,
     pub yes_selected: bool,
+    /// Diarization method the job will use, resolved when the prompt
+    /// opens (the requirement check may probe the Python runtime, so it
+    /// must not run per rendered frame).
+    pub diarize: DiarizeMethod,
+    /// What diarization still needs downloaded; None = ready (or off)
+    pub diarize_note: Option<String>,
 }
 
 pub struct App {
@@ -84,6 +93,8 @@ pub struct App {
     /// Some while asking "transcribe this file?" — every job start goes
     /// through this confirmation
     pub start_prompt: Option<StartPrompt>,
+    /// Some while the post-transcription speaker-naming dialog is open (`n`)
+    pub naming: Option<SpeakerNaming>,
     /// Timestamped record of everything since the first file was loaded
     pub job_log: JobLog,
     /// Right pane shows the job log instead of the transcript (`l`)
@@ -138,6 +149,7 @@ impl App {
             transcript: TranscriptState::new(),
             hub: HubState::new(),
             start_prompt: None,
+            naming: None,
             job_log: JobLog::new(),
             // The log view is the default; `l` switches to the transcript
             show_log: true,
@@ -151,6 +163,24 @@ impl App {
         self.work != WorkState::Idle
     }
 
+    /// The diarization plan for the current model selection: the method
+    /// the configured strategy resolves to, plus what it still needs
+    /// downloaded (None = ready). May probe the Python runtime — call on
+    /// user actions, not per rendered frame.
+    pub fn diarize_plan(&self) -> (DiarizeMethod, Option<String>) {
+        let method = self
+            .config
+            .diarize
+            .resolve(self.library.selected.as_ref().map(|m| m.name.as_str()));
+        let note = diarize::download_note(
+            method,
+            &self.library.models,
+            &self.library.dir,
+            &self.config.diarize_models,
+        );
+        (method, note)
+    }
+
     /// Every job start goes through here: opens the confirmation prompt
     /// instead of starting immediately. `start_transcription` runs once
     /// the prompt is confirmed.
@@ -162,9 +192,12 @@ impl App {
         self.job_log
             .push(format!("file selected: {}", audio.display()));
         self.status = format!("Transcribe {}?", file_name(&audio));
+        let (diarize, diarize_note) = self.diarize_plan();
         self.start_prompt = Some(StartPrompt {
             audio,
             yes_selected: true,
+            diarize,
+            diarize_note,
         });
     }
 
@@ -174,15 +207,27 @@ impl App {
             self.status = "A job is already running — press c to cancel it first".into();
             return;
         }
-        // Diarization is decided before conversion: it needs a tdrz model
-        let model = if self.config.diarize {
-            match self.find_tdrz_model() {
+        // Resolve the diarization strategy against the selected model;
+        // the tdrz method transcribes with the tdrz model itself
+        let method = self
+            .config
+            .diarize
+            .resolve(self.library.selected.as_ref().map(|m| m.name.as_str()));
+        let model = if method == DiarizeMethod::Tdrz {
+            let selected_tdrz = self
+                .library
+                .selected
+                .clone()
+                .filter(|m| models::is_tdrz(&m.name));
+            match selected_tdrz.or_else(|| self.find_tdrz_model()) {
                 Some(m) => m,
                 None => {
-                    self.status = "Diarization is ON but no tdrz model found — \
-                                   get ggml-small.en-tdrz.bin from huggingface.co/akashmjn/\
-                                   tinydiarize-whisper.cpp (or press d to turn it off)"
-                        .into();
+                    self.status = format!(
+                        "Diarization (tinydiarize) needs the tdrz model — download {} ({}) \
+                         via s → Model management, or press d for another strategy",
+                        diarize::TDRZ_FILE,
+                        diarize::TDRZ_SIZE
+                    );
                     return;
                 }
             }
@@ -195,17 +240,30 @@ impl App {
                 }
             }
         };
-        self.transcript.begin(audio.clone(), model.name.clone());
+        if let Some(note) = diarize::download_note(
+            method,
+            &self.library.models,
+            &self.library.dir,
+            &self.config.diarize_models,
+        ) {
+            self.job_log.push(format!("diarization {note}"));
+        }
+        self.transcript.begin(
+            audio.clone(),
+            model.name.clone(),
+            method.export_note().map(String::from),
+        );
         self.work = WorkState::LoadingModel {
             name: model.name.clone(),
             progress: 0,
         };
         self.job_log.push(format!(
-            "job start: {} · model {} · language {} · split {} · formats {}",
+            "job start: {} · model {} · language {} · split {} · diarize {} · formats {}",
             file_name(&audio),
             model.name,
             self.config.language.as_deref().unwrap_or("auto"),
             self.config.split_mode.label(),
+            method.label(),
             self.config
                 .export_formats
                 .iter()
@@ -217,7 +275,9 @@ impl App {
         self.transcriber.submit(Job {
             model: model.path,
             audio,
-            diarize: self.config.diarize,
+            diarize: method,
+            diarize_models: self.config.diarize_models.clone(),
+            diarize_speakers: self.config.diarize_speakers,
             language: self.config.language.clone(),
             split_mode: self.config.split_mode,
         });
@@ -259,6 +319,8 @@ impl App {
             duration_secs: self.transcript.duration_secs,
             language: self.transcript.language.as_deref(),
             model_name: self.transcript.model_name.as_deref(),
+            diarization: self.transcript.diarization.as_deref(),
+            speaker_names: Some(&self.transcript.speaker_names),
         };
         let written = doc.write(&self.output_dir, &self.config.export_formats)?;
         for path in &written {
@@ -395,10 +457,181 @@ mod tests {
         // fails fast here: no model is selected)
         app.request_transcription(dir.join("clip.wav"));
         app.library.selected = None;
-        app.config.diarize = false;
+        app.config.diarize = crate::diarize::DiarizeStrategy::Off;
         app.on_key(KeyCode::Enter, KeyModifiers::NONE);
         assert!(app.start_prompt.is_none());
         assert!(app.status.contains("No model"), "status: {}", app.status);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn diarize_strategy_cycles_with_status_explaining_each() {
+        use crate::diarize::DiarizeStrategy;
+        let _guard = lock_env(); // cycling persists the config
+        let dir = tempdir();
+        std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
+        let mut app = test_app(dir.clone());
+        app.library.dir = dir.clone(); // empty: no tdrz model on disk
+        app.library.models.clear();
+        app.config.diarize = DiarizeStrategy::Off;
+
+        app.cycle_diarize();
+        assert_eq!(app.config.diarize, DiarizeStrategy::Auto);
+        assert!(app.status.contains("Auto"), "{}", app.status);
+
+        // tdrz with no tdrz model: the status names the exact download
+        app.cycle_diarize();
+        assert_eq!(app.config.diarize, DiarizeStrategy::Tdrz);
+        assert!(
+            app.status.contains(crate::diarize::TDRZ_FILE),
+            "{}",
+            app.status
+        );
+        assert!(
+            app.status.contains(crate::diarize::TDRZ_SIZE),
+            "{}",
+            app.status
+        );
+
+        app.cycle_diarize();
+        assert_eq!(app.config.diarize, DiarizeStrategy::Embedding);
+        assert!(app.status.contains("embeddings"), "{}", app.status);
+
+        app.cycle_diarize();
+        assert_eq!(app.config.diarize, DiarizeStrategy::Off);
+        assert!(app.status.contains("OFF"), "{}", app.status);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn start_prompt_reports_the_diarize_plan() {
+        use crate::diarize::{DiarizeMethod, DiarizeStrategy};
+        let dir = tempdir();
+        std::fs::write(dir.join("clip.wav"), b"x").unwrap();
+        let mut app = test_app(dir.clone());
+        app.library.dir = dir.clone();
+        app.library.models.clear();
+
+        app.config.diarize = DiarizeStrategy::Off;
+        app.request_transcription(dir.join("clip.wav"));
+        let prompt = app.start_prompt.as_ref().unwrap();
+        assert_eq!(prompt.diarize, DiarizeMethod::None);
+        assert!(prompt.diarize_note.is_none());
+
+        // tdrz strategy without the tdrz model: the prompt warns exactly
+        // what must be downloaded before this can run
+        app.start_prompt = None;
+        app.config.diarize = DiarizeStrategy::Tdrz;
+        app.request_transcription(dir.join("clip.wav"));
+        let prompt = app.start_prompt.as_ref().unwrap();
+        assert_eq!(prompt.diarize, DiarizeMethod::Tdrz);
+        let note = prompt.diarize_note.as_ref().expect("download note");
+        assert!(note.contains(crate::diarize::TDRZ_FILE), "{note}");
+        assert!(note.contains(crate::diarize::TDRZ_SIZE), "{note}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn diarize_speaker_count_validates_and_persists() {
+        let _guard = lock_env();
+        let dir = tempdir();
+        std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
+        let mut app = test_app(dir.clone());
+
+        app.set_diarize_speakers("3");
+        assert_eq!(app.config.diarize_speakers, Some(3));
+        assert!(app.status.contains("exactly 3"), "{}", app.status);
+
+        // empty and zero mean auto-detect
+        app.set_diarize_speakers("");
+        assert_eq!(app.config.diarize_speakers, None);
+        app.set_diarize_speakers("0");
+        assert_eq!(app.config.diarize_speakers, None);
+
+        // out-of-range input is rejected and keeps the old value
+        app.set_diarize_speakers("2");
+        app.set_diarize_speakers("99");
+        assert_eq!(app.config.diarize_speakers, Some(2));
+        assert!(app.status.contains("1–26"), "{}", app.status);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn naming_dialog_renames_speakers_and_reexports_on_close() {
+        use crossterm::event::KeyModifiers;
+        let dir = tempdir();
+        let mut app = test_app(dir.clone());
+        app.output_dir = dir.join("out");
+
+        // No diarized transcript yet → the dialog refuses to open
+        app.open_speaker_naming();
+        assert!(app.naming.is_none());
+        assert!(app.status.contains("No speaker labels"), "{}", app.status);
+
+        // A diarized transcript: two speakers, distinct longest samples
+        app.transcript.source = Some(dir.join("call.wav"));
+        app.transcript.segments = vec![
+            Segment {
+                start_ms: 0,
+                end_ms: 5000,
+                text: "the long intro".into(),
+                speaker: Some(0),
+            },
+            Segment {
+                start_ms: 5000,
+                end_ms: 6000,
+                text: "reply".into(),
+                speaker: Some(1),
+            },
+        ];
+        app.open_speaker_naming();
+        let naming = app.naming.as_ref().expect("dialog opens");
+        assert_eq!(naming.rows.len(), 2);
+        assert_eq!(naming.rows[0].sample_text, "the long intro");
+
+        // Enter opens the input; type a name; Enter saves it
+        app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+        for c in "George".chars() {
+            app.on_key(KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(
+            app.transcript.speaker_names.get(&0).map(String::as_str),
+            Some("George")
+        );
+
+        // Esc closes and re-exports with the name applied
+        app.on_key(KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app.naming.is_none());
+        assert!(app.status.contains("re-exported"), "{}", app.status);
+        let exported: Vec<_> = std::fs::read_dir(dir.join("out")).unwrap().flatten().collect();
+        assert_eq!(exported.len(), 1);
+        let md =
+            std::fs::read_to_string(exported[0].path().join("call.llm.md")).unwrap();
+        assert!(md.contains("George: the long intro"), "{md}");
+        assert!(md.contains("Speaker B: reply"), "{md}");
+        assert!(md.contains("speakers: Speaker A = George"), "{md}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn tdrz_job_without_the_model_explains_the_download() {
+        use crate::diarize::DiarizeStrategy;
+        let dir = tempdir();
+        let mut app = test_app(dir.clone());
+        app.library.dir = dir.clone();
+        app.library.models.clear();
+        app.library.selected = None;
+        app.config.diarize = DiarizeStrategy::Tdrz;
+
+        app.start_transcription(dir.join("clip.wav"));
+        assert!(!app.busy(), "job must not start without the tdrz model");
+        assert!(
+            app.status.contains(crate::diarize::TDRZ_FILE),
+            "{}",
+            app.status
+        );
+        assert!(app.status.contains("Model management"), "{}", app.status);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -532,7 +765,7 @@ mod tests {
         app.open_hub();
         assert!(app.hub.open);
         // the curated list is embedded and parsed at startup
-        assert_eq!(app.hub.suggested.len(), 3);
+        assert_eq!(app.hub.suggested.len(), 4);
 
         // typing edits the search bar and arms the debounce (no search yet)
         for c in "whisper".chars() {
@@ -543,14 +776,14 @@ mod tests {
         assert!(!app.hub.searching);
 
         // Down clamps to the visible list, Up back to the top
-        app.hub_key(KeyCode::Down);
-        app.hub_key(KeyCode::Down);
-        app.hub_key(KeyCode::Down);
-        app.hub_key(KeyCode::Down);
-        assert_eq!(app.hub.selected, 2);
-        app.hub_key(KeyCode::Up);
-        app.hub_key(KeyCode::Up);
-        app.hub_key(KeyCode::Up);
+        let len = app.hub_visible_list().len();
+        for _ in 0..len + 3 {
+            app.hub_key(KeyCode::Down);
+        }
+        assert_eq!(app.hub.selected, len - 1);
+        for _ in 0..len + 3 {
+            app.hub_key(KeyCode::Up);
+        }
         assert_eq!(app.hub.selected, 0);
 
         // Esc peels one layer at a time: clear input, then close
@@ -578,7 +811,11 @@ mod tests {
             format: "nemo".into(),
             note: String::new(),
         });
-        let index = app.hub_default_entries().len() - 1;
+        let index = app
+            .hub_default_entries()
+            .iter()
+            .position(|e| e.name == "some-nemo-model")
+            .unwrap();
         app.hub.selected = index;
         app.hub_key(KeyCode::Enter);
         assert!(app.hub.download.is_none());
@@ -622,7 +859,7 @@ mod tests {
         std::fs::write(model.join("config.json"), b"{}").unwrap();
         std::fs::write(model.join("model.safetensors"), vec![0u8; 500]).unwrap();
 
-        let mut d = fake_download("parakeet-tdt-0.6b-v3", Arc::new(AtomicBool::new(false)));
+        let mut d = fake_download("parakeet-tdt-0.6b-v3", &dir, Arc::new(AtomicBool::new(false)));
         d.is_dir = true;
         d.remote_file = String::new();
         app.hub.download = Some(d);
@@ -697,16 +934,95 @@ mod tests {
         let large = entries.iter().find(|e| e.file == "ggml-large-v3.bin").unwrap();
         assert!(large.installed);
         assert_eq!(large.name, "whisper-large-v3");
-        // The two downloaded models precede the two remaining (MLX) suggestions,
-        // which are greyed out (not installed).
+        // The two downloaded models precede the three remaining suggestions
+        // (tdrz + the two MLX ones), which are greyed out (not installed).
         assert!(entries[0].installed && entries[1].installed);
-        assert_eq!(entries.iter().filter(|e| !e.installed).count(), 2);
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|e| e.kind == crate::app::EntryKind::Model && !e.installed)
+                .count(),
+            3
+        );
         let first_file = entries[0].file.to_string();
         drop(entries);
         // Enter on a downloaded row selects it as the default model.
         app.hub.selected = 0;
         app.hub_key(KeyCode::Enter);
         assert_eq!(app.config.default_model.as_deref(), Some(first_file.as_str()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn hub_diarization_category_lists_downloads_and_selects_active() {
+        use crate::app::EntryKind;
+        use crate::diarize::sherpa;
+        let _guard = lock_env(); // Enter persists the choice
+        let dir = tempdir();
+        std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
+        let mut app = test_app(dir.clone());
+        app.library.dir = dir.clone();
+        app.open_hub();
+
+        // The section header precedes one row per catalog component, and
+        // each role's default is marked active before anything downloads.
+        let entries = app.hub_default_entries();
+        let section = entries
+            .iter()
+            .position(|e| e.kind == EntryKind::Section)
+            .expect("section header present");
+        let rows: Vec<_> = entries
+            .iter()
+            .filter(|e| e.kind == EntryKind::Diarize)
+            .collect();
+        assert_eq!(rows.len(), sherpa::CATALOG.len());
+        assert!(rows
+            .iter()
+            .any(|e| e.file == "pyannote-segmentation-3.onnx" && e.active && !e.installed));
+        assert!(rows
+            .iter()
+            .any(|e| e.file == "nemo-titanet-small.onnx" && e.active && !e.installed));
+        drop(rows);
+        drop(entries);
+
+        // Enter on the section header is inert.
+        app.hub.selected = section;
+        app.hub_key(KeyCode::Enter);
+        assert!(app.hub.download.is_none());
+
+        // Enter on an installed embedding component makes it active
+        // (persisted); the default loses its marker.
+        let ddir = sherpa::dir(&dir);
+        std::fs::create_dir_all(&ddir).unwrap();
+        std::fs::write(ddir.join("campplus-zh-en.onnx"), b"onnx").unwrap();
+        let index = app
+            .hub_default_entries()
+            .iter()
+            .position(|e| e.file == "campplus-zh-en.onnx")
+            .unwrap();
+        app.hub.selected = index;
+        app.hub_key(KeyCode::Enter);
+        assert_eq!(
+            app.config.diarize_models.embedding.as_deref(),
+            Some("campplus-zh-en.onnx")
+        );
+        let entries = app.hub_default_entries();
+        let camp = entries.iter().find(|e| e.file == "campplus-zh-en.onnx").unwrap();
+        assert!(camp.installed && camp.active);
+        let titanet = entries
+            .iter()
+            .find(|e| e.file == "nemo-titanet-small.onnx")
+            .unwrap();
+        assert!(!titanet.active);
+        drop(entries);
+
+        // Del prompts and removes the component file.
+        app.hub.selected = index;
+        app.hub_key(KeyCode::Delete);
+        let prompt = app.hub.delete_prompt.as_ref().expect("prompt opens");
+        assert_eq!(prompt.name, "campplus-zh-en.onnx");
+        app.hub_key(KeyCode::Char('y'));
+        assert!(!ddir.join("campplus-zh-en.onnx").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -744,13 +1060,14 @@ mod tests {
 
     /// Build an in-flight download entry for tests, sharing the pause flag so
     /// the test can observe pause requests.
-    fn fake_download(file: &str, pause: Arc<AtomicBool>) -> Download {
+    fn fake_download(file: &str, dest_dir: &std::path::Path, pause: Arc<AtomicBool>) -> Download {
         Download {
             file: file.into(),
             repo: "repo".into(),
             remote_file: file.into(),
             is_dir: false,
             subdir: String::new(),
+            dest_dir: dest_dir.to_path_buf(),
             got: 0,
             total: 0,
             paused: false,
@@ -767,7 +1084,7 @@ mod tests {
         app.open_hub();
 
         // Progress only updates an already-running download.
-        app.hub.download = Some(fake_download("ggml-x.bin", Arc::new(AtomicBool::new(false))));
+        app.hub.download = Some(fake_download("ggml-x.bin", &dir, Arc::new(AtomicBool::new(false))));
         app.handle_hub_event(HubEvent::Progress {
             file: "ggml-x.bin".into(),
             got: 5,
@@ -806,7 +1123,7 @@ mod tests {
         app.open_hub();
 
         let pause = Arc::new(AtomicBool::new(false));
-        app.hub.download = Some(fake_download("ggml-x.bin", pause.clone()));
+        app.hub.download = Some(fake_download("ggml-x.bin", &dir, pause.clone()));
 
         // 'p' asks the worker to pause: the shared flag flips, state not yet paused.
         app.hub_key(KeyCode::Char('p'));

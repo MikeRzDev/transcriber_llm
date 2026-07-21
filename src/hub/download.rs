@@ -28,8 +28,9 @@ enum Outcome {
     Paused(u64),
 }
 
-/// How one file's stream ended (a directory download runs many of these).
-enum FileOutcome {
+/// How one file's stream ended (a directory download runs many of
+/// these; the diarizer fetches its ONNX models through the same core).
+pub(crate) enum FileOutcome {
     Done,
     Cancelled,
     Paused(u64),
@@ -47,10 +48,25 @@ pub fn download(
     pause: Arc<AtomicBool>,
     tx: Sender<HubEvent>,
 ) {
+    let save_as = dest_name(&file).unwrap_or_else(|| file.clone());
+    download_as(repo, file, save_as, dest_dir, cancel, pause, tx);
+}
+
+/// `download`, but saved under an explicit local name instead of the
+/// remote file's base name — used by the diarization catalog, whose
+/// repos name their models generically (`model.onnx`).
+pub fn download_as(
+    repo: String,
+    file: String,
+    save_as: String,
+    dest_dir: PathBuf,
+    cancel: Arc<AtomicBool>,
+    pause: Arc<AtomicBool>,
+    tx: Sender<HubEvent>,
+) {
     std::thread::spawn(move || {
-        let display = dest_name(&file).unwrap_or_else(|| file.clone());
-        let result = download_blocking(&repo, &file, &dest_dir, &cancel, &pause, &display, &tx);
-        let _ = tx.send(finish_event(result, display));
+        let result = download_blocking(&repo, &file, &save_as, &dest_dir, &cancel, &pause, &tx);
+        let _ = tx.send(finish_event(result, save_as));
     });
 }
 
@@ -95,19 +111,19 @@ fn finish_event(result: anyhow::Result<Outcome>, display: String) -> HubEvent {
 fn download_blocking(
     repo: &str,
     file: &str,
+    save_as: &str,
     dest_dir: &Path,
     cancel: &AtomicBool,
     pause: &AtomicBool,
-    display: &str,
     tx: &Sender<HubEvent>,
 ) -> anyhow::Result<Outcome> {
+    anyhow::ensure!(!save_as.is_empty(), "bad file name");
     std::fs::create_dir_all(dest_dir)?;
-    let base = dest_name(file).ok_or_else(|| anyhow::anyhow!("bad file name"))?;
-    let final_path = dest_dir.join(&base);
+    let final_path = dest_dir.join(save_as);
     let url = format!("https://huggingface.co/{repo}/resolve/main/{file}");
     let mut report = |got, total| {
         let _ = tx.send(HubEvent::Progress {
-            file: display.to_string(),
+            file: save_as.to_string(),
             got,
             total,
         });
@@ -254,7 +270,7 @@ fn plan_dir_download(files: &[HubFile], part_dir: &Path) -> DirPlan {
 /// via HTTP Range — then rename into place. `on_progress` gets (got,
 /// total) byte counts, throttled. Cancel removes the partial; pause keeps
 /// it for a later resume.
-fn stream_file(
+pub(crate) fn stream_file(
     url: &str,
     final_path: &Path,
     cancel: &AtomicBool,

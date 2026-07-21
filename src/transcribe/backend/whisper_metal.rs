@@ -12,8 +12,9 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 use super::Engine;
 use crate::audio;
+use crate::diarize::{alternate_speakers, DiarizeMethod};
 use crate::split::{self, EngineCaps};
-use crate::transcribe::{alternate_speakers, Event, Job, Segment};
+use crate::transcribe::{Event, Job, Segment};
 
 /// The whisper.cpp engine: loads GGML/GGUF files lazily and keeps the
 /// context resident between jobs until unloaded or a different model is
@@ -274,8 +275,9 @@ fn run_job(
     let mut state = ctx.create_state()?;
     let _ = events.send(Event::EngineLog("whisper inference state ready".into()));
 
-    // Diarization is opt-in and only tdrz models emit turn markers
-    let diarize = job.diarize && crate::models::is_tdrz(&model_name);
+    // Only the inline tdrz method runs here (the embedding method is a
+    // worker post-pass), and only tdrz models emit turn markers
+    let diarize = job.diarize == DiarizeMethod::Tdrz && crate::models::is_tdrz(&model_name);
     let language = resolve_language(&model_name, job);
     let threads = std::thread::available_parallelism()
         .map(|n| n.get() as i32)

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::diarize::{DiarizeModelChoice, DiarizeStrategy};
 use crate::export::ExportFormat;
 use crate::split::SplitMode;
 
@@ -12,8 +13,15 @@ pub struct Config {
     pub models_dir: Option<PathBuf>,
     pub output_dir: Option<PathBuf>,
     pub default_model: Option<String>,
-    /// Label speakers via tinydiarize before transcription starts
-    pub diarize: bool,
+    /// Diarization strategy applied to every transcription
+    pub diarize: DiarizeStrategy,
+    /// Which diarization catalog models the embedding pipeline uses
+    /// (on-disk names; None = the role's default)
+    pub diarize_models: DiarizeModelChoice,
+    /// Known speaker count for the embedding pipeline; None = auto-detect.
+    /// Fixing the count when it is known constrains the clustering and
+    /// noticeably improves label quality.
+    pub diarize_speakers: Option<u8>,
     /// ISO 639-1 code passed to whisper; None = auto-detect
     pub language: Option<String>,
     /// Chunking strategy for long audio
@@ -28,7 +36,9 @@ impl Default for Config {
             models_dir: None,
             output_dir: None,
             default_model: None,
-            diarize: false,
+            diarize: DiarizeStrategy::Off,
+            diarize_models: DiarizeModelChoice::default(),
+            diarize_speakers: None,
             language: None,
             split_mode: SplitMode::default(),
             export_formats: ExportFormat::ALL.to_vec(),
@@ -106,8 +116,18 @@ struct ConfigToml {
     output_dir: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     default_model: Option<String>,
+    /// Legacy on/off toggle from before strategies existed — read only
+    /// (true meant tinydiarize), never written back.
     #[serde(skip_serializing_if = "Option::is_none")]
     diarize: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diarize_strategy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diarize_segmentation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diarize_embedding: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diarize_speakers: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     split_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -125,7 +145,19 @@ impl ConfigToml {
             models_dir: non_empty(self.models_dir).map(PathBuf::from),
             output_dir: non_empty(self.output_dir).map(PathBuf::from),
             default_model: non_empty(self.default_model),
-            diarize: self.diarize.unwrap_or(false),
+            diarize: self
+                .diarize_strategy
+                .as_deref()
+                .and_then(DiarizeStrategy::parse)
+                .unwrap_or(match self.diarize {
+                    Some(true) => DiarizeStrategy::Tdrz,
+                    _ => DiarizeStrategy::Off,
+                }),
+            diarize_models: DiarizeModelChoice {
+                segmentation: non_empty(self.diarize_segmentation),
+                embedding: non_empty(self.diarize_embedding),
+            },
+            diarize_speakers: self.diarize_speakers.filter(|n| *n > 0),
             language: non_empty(self.language).filter(|lang| lang != "auto"),
             split_mode: non_empty(self.split_mode)
                 .and_then(|mode| SplitMode::parse(&mode))
@@ -143,7 +175,12 @@ impl ConfigToml {
             models_dir: config.models_dir.as_ref().map(|p| p.display().to_string()),
             output_dir: config.output_dir.as_ref().map(|p| p.display().to_string()),
             default_model: config.default_model.clone(),
-            diarize: config.diarize.then_some(true),
+            diarize: None,
+            diarize_strategy: (config.diarize != DiarizeStrategy::Off)
+                .then(|| config.diarize.key().to_string()),
+            diarize_segmentation: config.diarize_models.segmentation.clone(),
+            diarize_embedding: config.diarize_models.embedding.clone(),
+            diarize_speakers: config.diarize_speakers,
             split_mode: (config.split_mode != SplitMode::Auto)
                 .then(|| config.split_mode.as_str().to_string()),
             language: config.language.clone(),
@@ -181,7 +218,20 @@ fn parse_lenient(contents: &str) -> Config {
             "models_dir" => config.models_dir = Some(PathBuf::from(value)),
             "output_dir" => config.output_dir = Some(PathBuf::from(value)),
             "default_model" => config.default_model = Some(value.to_string()),
-            "diarize" => config.diarize = value == "true",
+            // legacy on/off toggle: true meant tinydiarize
+            "diarize" if value == "true" => config.diarize = DiarizeStrategy::Tdrz,
+            "diarize_strategy" => {
+                if let Some(strategy) = DiarizeStrategy::parse(value) {
+                    config.diarize = strategy;
+                }
+            }
+            "diarize_segmentation" => {
+                config.diarize_models.segmentation = Some(value.to_string())
+            }
+            "diarize_embedding" => config.diarize_models.embedding = Some(value.to_string()),
+            "diarize_speakers" => {
+                config.diarize_speakers = value.parse::<u8>().ok().filter(|n| *n > 0)
+            }
             "split_mode" => {
                 if let Some(mode) = SplitMode::parse(value) {
                     config.split_mode = mode;
@@ -242,12 +292,40 @@ mod tests {
             models_dir: Some(PathBuf::from("/some/dir with spaces")),
             output_dir: Some(PathBuf::from("/somewhere/out")),
             default_model: Some("ggml-large-v3.bin".into()),
-            diarize: true,
+            diarize: DiarizeStrategy::Embedding,
+            diarize_models: DiarizeModelChoice {
+                segmentation: None,
+                embedding: Some("campplus-zh-en.onnx".into()),
+            },
+            diarize_speakers: Some(3),
             language: Some("es".into()),
             split_mode: SplitMode::Silence,
             export_formats: vec![ExportFormat::LlmMd, ExportFormat::Srt],
         };
         assert_eq!(parse_str(&render(&config)), config);
+    }
+
+    #[test]
+    fn legacy_diarize_bool_maps_to_the_tdrz_strategy() {
+        // pre-strategy configs held a bool; true meant tinydiarize
+        assert_eq!(
+            parse_str("diarize = true").diarize,
+            DiarizeStrategy::Tdrz
+        );
+        assert_eq!(parse_str("diarize = false").diarize, DiarizeStrategy::Off);
+        // the new key wins over the legacy one
+        assert_eq!(
+            parse_str("diarize = true\ndiarize_strategy = \"auto\"").diarize,
+            DiarizeStrategy::Auto
+        );
+        // saving never writes the legacy key back
+        let config = Config {
+            diarize: DiarizeStrategy::Auto,
+            ..Config::default()
+        };
+        let rendered = render(&config);
+        assert!(rendered.contains("diarize_strategy"), "{rendered}");
+        assert!(!rendered.contains("diarize = "), "{rendered}");
     }
 
     #[test]

@@ -25,17 +25,51 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
         .unwrap_or_else(|| "none".into());
 
     let row_style = |row: SettingsRow| {
-        if app.settings.selected == row && app.settings.language_input.is_none() {
+        let editing =
+            app.settings.language_input.is_some() || app.settings.speakers_input.is_some();
+        if app.settings.selected == row && !editing {
             highlight_style()
         } else {
             Style::default()
         }
     };
 
-    let diarize_state = if app.config.diarize {
-        "ON  (uses the tdrz model, English only)"
+    // Cheap on purpose (rendered per frame): resolving the strategy is
+    // pure; the download checks live in the status line via Enter/d.
+    let diarize_state = {
+        use crate::diarize::DiarizeStrategy;
+        let strategy = app.config.diarize;
+        match strategy {
+            DiarizeStrategy::Auto => {
+                let method = strategy
+                    .resolve(app.library.selected.as_ref().map(|m| m.name.as_str()));
+                format!("Auto → {}", method.label())
+            }
+            _ => strategy.label().to_string(),
+        }
+    };
+
+    let speakers_line: Line = if let Some(input) = &app.settings.speakers_input {
+        Line::from(vec![
+            Span::raw("  Speakers:       "),
+            Span::styled(
+                format!("{input}▏"),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
     } else {
-        "OFF"
+        Line::from(Span::styled(
+            format!(
+                "  Speakers:       {}",
+                match app.config.diarize_speakers {
+                    Some(n) => format!("exactly {n}"),
+                    None => "auto-detect".into(),
+                }
+            ),
+            row_style(SettingsRow::DiarizeSpeakers),
+        ))
     };
 
     let language_line: Line = if let Some(input) = &app.settings.language_input {
@@ -98,6 +132,8 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
             row_style(SettingsRow::Diarize),
         )),
         Line::raw(""),
+        speakers_line,
+        Line::raw(""),
         Line::from(Span::styled(
             format!("  Split mode:     {}", app.config.split_mode.label()),
             row_style(SettingsRow::SplitMode),
@@ -108,6 +144,8 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
         Line::from(Span::styled(
             if app.settings.language_input.is_some() {
                 "  Type an ISO 639-1 code (en, es, de, fr…) or auto, Enter to save"
+            } else if app.settings.speakers_input.is_some() {
+                "  Known speaker count (1–26) pins the clustering; empty = auto-detect"
             } else {
                 "  ↑↓ select · Enter change · Esc close  (saved to ~/.config/transcribe-stt)"
             },

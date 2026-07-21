@@ -18,6 +18,10 @@ impl App {
             self.start_prompt_key(code);
             return;
         }
+        if self.naming.is_some() {
+            self.naming_key(code);
+            return;
+        }
         if self.hub.open {
             if !modifiers.contains(KeyModifiers::CONTROL) {
                 self.hub_key(code);
@@ -88,7 +92,8 @@ impl App {
                 self.settings.selected = SettingsRow::DefaultModel;
                 self.settings.open = true;
             }
-            KeyCode::Char('d') => self.toggle_diarize(),
+            KeyCode::Char('d') => self.cycle_diarize(),
+            KeyCode::Char('n') => self.open_speaker_naming(),
             KeyCode::Char('l') => {
                 // Right pane: transcript ⇄ job log
                 self.show_log = !self.show_log;

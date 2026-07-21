@@ -1,6 +1,7 @@
 //! Transcript output formats. The `.llm.md` format is the primary one:
 //! it is designed for an LLM to interpret the conversation and act on it.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -63,9 +64,24 @@ pub struct TranscriptDoc<'a> {
     pub duration_secs: Option<f32>,
     pub language: Option<&'a str>,
     pub model_name: Option<&'a str>,
+    /// How speaker labels were produced (the diarization method's
+    /// export note); None when no diarizer ran.
+    pub diarization: Option<&'a str>,
+    /// Human names assigned to speaker indices (the naming dialog);
+    /// unnamed speakers keep their letter labels.
+    pub speaker_names: Option<&'a BTreeMap<u8, String>>,
 }
 
 impl TranscriptDoc<'_> {
+    /// The display label for a speaker: their assigned name, else the
+    /// anonymous letter label.
+    fn label(&self, speaker: u8) -> String {
+        self.speaker_names
+            .and_then(|names| names.get(&speaker))
+            .cloned()
+            .unwrap_or_else(|| speaker_label(speaker))
+    }
+
     /// Write the selected formats into `<out_base>/<source-stem>_<timestamp>/`.
     /// Returns the paths written.
     pub fn write(&self, out_base: &Path, formats: &[ExportFormat]) -> Result<Vec<PathBuf>> {
@@ -105,7 +121,7 @@ impl TranscriptDoc<'_> {
         let mut out = String::new();
         for seg in self.segments {
             if let Some(speaker) = seg.speaker {
-                out.push_str(&format!("{}: ", speaker_label(speaker)));
+                out.push_str(&format!("{}: ", self.label(speaker)));
             }
             out.push_str(seg.text.trim());
             out.push('\n');
@@ -118,7 +134,7 @@ impl TranscriptDoc<'_> {
         for (i, seg) in self.segments.iter().enumerate() {
             let speaker = seg
                 .speaker
-                .map(|s| format!("{}: ", speaker_label(s)))
+                .map(|s| format!("{}: ", self.label(s)))
                 .unwrap_or_default();
             out.push_str(&format!(
                 "{}\n{} --> {}\n{}{}\n\n",
@@ -156,9 +172,19 @@ impl TranscriptDoc<'_> {
         out.push_str(&format!("segments: {}\n", self.segments.len()));
         let diarized = self.segments.iter().any(|s| s.speaker.is_some());
         if diarized {
-            out.push_str(
-                "diarization: speaker-turn detection (tinydiarize), two-speaker labeling\n",
-            );
+            out.push_str(&format!(
+                "diarization: {}\n",
+                self.diarization.unwrap_or("model-provided speaker labels")
+            ));
+            // Named speakers: record who each letter is, for the reader
+            // and for any LLM consuming the frontmatter.
+            if let Some(names) = self.speaker_names.filter(|n| !n.is_empty()) {
+                let list: Vec<String> = names
+                    .iter()
+                    .map(|(s, name)| format!("{} = {name}", speaker_label(*s)))
+                    .collect();
+                out.push_str(&format!("speakers: {}\n", list.join(", ")));
+            }
         } else {
             out.push_str("diarization: none\n");
         }
@@ -168,9 +194,9 @@ impl TranscriptDoc<'_> {
             out.push_str(
                 "> Verbatim automatic speech recognition output. `[HH:MM:SS]` anchors mark where\n\
                  > each paragraph starts in the source media. Speaker labels come from acoustic\n\
-                 > turn detection assuming a two-person conversation: labels A/B are consistent\n\
-                 > but arbitrary (A is whoever speaks first), and occasional turns may be missed\n\
-                 > or split — treat labels as strong hints, not ground truth.\n\n",
+                 > diarization: labels are consistent within the transcript but arbitrary (A is\n\
+                 > whoever speaks first), and occasional turns may be missed or misattributed —\n\
+                 > treat labels as strong hints, not ground truth.\n\n",
             );
         } else {
             out.push_str(
@@ -185,7 +211,7 @@ impl TranscriptDoc<'_> {
                 Some(speaker) => out.push_str(&format!(
                     "[{}] {}: {}\n\n",
                     llm_time(para.start_ms),
-                    speaker_label(speaker),
+                    self.label(speaker),
                     para.text
                 )),
                 None => out.push_str(&format!("[{}] {}\n\n", llm_time(para.start_ms), para.text)),
@@ -205,7 +231,7 @@ impl TranscriptDoc<'_> {
                 serde_json::json!({
                     "start_ms": seg.start_ms,
                     "end_ms": seg.end_ms,
-                    "speaker": seg.speaker.map(speaker_label),
+                    "speaker": seg.speaker.map(|s| self.label(s)),
                     "text": seg.text.trim(),
                 })
             }).collect::<Vec<_>>(),
@@ -315,6 +341,8 @@ mod tests {
             duration_secs: Some(1.0),
             language: Some("en"),
             model_name: None,
+            diarization: None,
+            speaker_names: None,
         };
         let parsed: serde_json::Value = serde_json::from_str(&doc.json()).unwrap();
         assert_eq!(parsed["source"], "a \"b\".mp4");
@@ -331,6 +359,8 @@ mod tests {
             duration_secs: Some(61.0),
             language: Some("en"),
             model_name: Some("ggml-large-v3.bin"),
+            diarization: None,
+            speaker_names: None,
         };
         let md = doc.llm_markdown();
         assert!(md.starts_with("---\ntype: conversation-transcript\n"));
@@ -348,6 +378,8 @@ mod tests {
             duration_secs: None,
             language: None,
             model_name: None,
+            diarization: None,
+            speaker_names: None,
         };
         assert_eq!(
             doc.srt(),
@@ -391,6 +423,8 @@ mod tests {
             duration_secs: Some(1.0),
             language: Some("en"),
             model_name: Some("m.bin"),
+            diarization: None,
+            speaker_names: None,
         };
         let written = doc.write_all(&dir).unwrap();
         assert_eq!(written.len(), 4);
@@ -425,6 +459,8 @@ mod tests {
             duration_secs: Some(1.0),
             language: Some("en"),
             model_name: None,
+            diarization: None,
+            speaker_names: None,
         };
         let written = doc
             .write(&dir, &[ExportFormat::Json, ExportFormat::Srt])
@@ -459,6 +495,8 @@ mod tests {
             duration_secs: Some(1.0),
             language: Some("en"),
             model_name: None,
+            diarization: None,
+            speaker_names: None,
         };
         assert!(doc.write(&base, &ExportFormat::ALL).is_err());
         // only finished jobs may exist in the output folder
@@ -500,6 +538,8 @@ mod tests {
             duration_secs: Some(2.0),
             language: Some("en"),
             model_name: Some("ggml-small.en-tdrz.bin"),
+            diarization: Some("speaker-turn detection (tinydiarize), two-speaker labeling"),
+            speaker_names: None,
         };
         let md = doc.llm_markdown();
         assert!(md.contains("diarization: speaker-turn detection"));
@@ -511,6 +551,31 @@ mod tests {
 
         let parsed: serde_json::Value = serde_json::from_str(&doc.json()).unwrap();
         assert_eq!(parsed["segments"][0]["speaker"], "Speaker A");
+        assert_eq!(parsed["segments"][1]["speaker"], "Speaker B");
+    }
+
+    #[test]
+    fn assigned_names_replace_letter_labels_everywhere() {
+        let segments = vec![spk(0, 1000, "Hi.", 0), spk(1000, 2000, "Hello.", 1)];
+        let names: BTreeMap<u8, String> = [(0u8, "George".to_string())].into();
+        let doc = TranscriptDoc {
+            segments: &segments,
+            source_name: "call.wav".into(),
+            duration_secs: Some(2.0),
+            language: Some("en"),
+            model_name: None,
+            diarization: Some("pyannote segmentation + speaker-embedding clustering (sherpa-onnx)"),
+            speaker_names: Some(&names),
+        };
+        let md = doc.llm_markdown();
+        // the named speaker appears by name, the unnamed one keeps B
+        assert!(md.contains("speakers: Speaker A = George"), "{md}");
+        assert!(md.contains("George: Hi."), "{md}");
+        assert!(md.contains("Speaker B: Hello."), "{md}");
+        assert!(doc.plain_text().contains("George: Hi."));
+        assert!(doc.srt().contains("George: Hi."));
+        let parsed: serde_json::Value = serde_json::from_str(&doc.json()).unwrap();
+        assert_eq!(parsed["segments"][0]["speaker"], "George");
         assert_eq!(parsed["segments"][1]["speaker"], "Speaker B");
     }
 

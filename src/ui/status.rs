@@ -63,6 +63,13 @@ fn key_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             ("y/n", "shortcuts"),
             ("Esc", "cancel"),
         ]
+    } else if app.naming.is_some() {
+        vec![
+            ("↑↓", "select"),
+            ("Enter", "name speaker"),
+            ("p", "play sample"),
+            ("Esc", "done"),
+        ]
     } else if app.hub.open {
         vec![
             ("type", "search"),
@@ -114,6 +121,7 @@ fn key_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             ("m", "models"),
             ("s", "settings"),
             ("d", "diarize"),
+            ("n", "name speakers"),
             ("q", "quit"),
         ]);
         keys
