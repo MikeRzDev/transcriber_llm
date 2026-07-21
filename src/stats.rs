@@ -55,6 +55,12 @@ impl ProcStats {
     }
 }
 
+impl Default for ProcStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn format_stats(mem_bytes: u64, cpu_percent: f32, core_count: usize) -> String {
     let mem = crate::format::human_size(mem_bytes);
     let machine_pct = (cpu_percent / core_count.max(1) as f32).clamp(0.0, 100.0);

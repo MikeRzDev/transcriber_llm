@@ -262,7 +262,8 @@ impl App {
                 self.hub.info = format!("Downloaded {file} ✓");
                 self.status = format!("Downloaded {file} to {}", self.library.dir.display());
                 if self.library.selected.is_none() {
-                    self.library.selected = self.library.models.iter().find(|m| m.path == path).cloned();
+                    self.library.selected =
+                        self.library.models.iter().find(|m| m.path == path).cloned();
                 }
             }
             HubEvent::Cancelled { file } => {

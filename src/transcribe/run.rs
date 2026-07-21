@@ -52,11 +52,9 @@ fn read_model_with_progress(
         }
         buffer.extend_from_slice(&chunk[..n]);
         read_total += n as u64;
-        let pct = if total > 0 {
-            (read_total * READ_PROGRESS_SPAN / total) as i32
-        } else {
-            0
-        };
+        let pct = (read_total * READ_PROGRESS_SPAN)
+            .checked_div(total)
+            .unwrap_or(0) as i32;
         if pct != last_pct {
             last_pct = pct;
             let _ = events.send(Event::LoadProgress(pct));
@@ -275,7 +273,13 @@ pub(super) fn run_job(
         result?;
 
         if diarize {
-            collect_diarized(&state, offset_ms, emit_from_ms, &mut labeled, &mut turn_flags);
+            collect_diarized(
+                &state,
+                offset_ms,
+                emit_from_ms,
+                &mut labeled,
+                &mut turn_flags,
+            );
         }
     }
 

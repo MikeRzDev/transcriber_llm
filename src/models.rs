@@ -25,7 +25,10 @@ pub fn is_english_only(name: &str) -> bool {
 
 /// The model a job should use when none is explicitly selected: the
 /// configured default first, then large-v3, then whatever exists.
-pub fn pick_default<'a>(models: &'a [ModelFile], configured: Option<&str>) -> Option<&'a ModelFile> {
+pub fn pick_default<'a>(
+    models: &'a [ModelFile],
+    configured: Option<&str>,
+) -> Option<&'a ModelFile> {
     configured
         .and_then(|name| models.iter().find(|m| m.name == name))
         .or_else(|| models.iter().find(|m| m.name.contains("large-v3")))

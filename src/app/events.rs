@@ -61,8 +61,9 @@ impl App {
                 } else {
                     ""
                 };
-                let base =
-                    format!("Done in {elapsed_secs:.1}s ({rtf:.2}× realtime, lang: {lang}{spoken})");
+                let base = format!(
+                    "Done in {elapsed_secs:.1}s ({rtf:.2}× realtime, lang: {lang}{spoken})"
+                );
                 // Exports run automatically after every successful transcription
                 self.status = if self.transcript.segments.is_empty() {
                     format!("{base} — no speech found, nothing to export")

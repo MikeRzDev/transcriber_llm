@@ -11,8 +11,8 @@ mod library;
 mod settings;
 mod transcript;
 
-pub use browser::{FileBrowser, FileEntry};
 pub(crate) use browser::file_name;
+pub use browser::{FileBrowser, FileEntry};
 pub use drop::DropDetector;
 pub use hub_state::{HubList, HubState};
 pub use library::{ModelLibrary, ModelPicker};
@@ -40,11 +40,16 @@ pub enum Focus {
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkState {
     Idle,
-    LoadingModel { name: String, progress: i32 },
+    LoadingModel {
+        name: String,
+        progress: i32,
+    },
     /// Resident model being released after a model switch
     UnloadingModel,
     Decoding,
-    Transcribing { progress: i32 },
+    Transcribing {
+        progress: i32,
+    },
 }
 
 pub struct App {
@@ -142,8 +147,7 @@ impl App {
             match self.library.selected.clone() {
                 Some(m) => m,
                 None => {
-                    self.status =
-                        "No model found — download one via s → Model management".into();
+                    self.status = "No model found — download one via s → Model management".into();
                     return;
                 }
             }
@@ -205,7 +209,9 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn lock_env() -> std::sync::MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn tempdir() -> PathBuf {
@@ -405,7 +411,10 @@ mod tests {
             path: path.clone(),
         });
         assert!(app.hub.download.is_none());
-        assert_eq!(app.library.selected.as_ref().map(|m| m.path.clone()), Some(path));
+        assert_eq!(
+            app.library.selected.as_ref().map(|m| m.path.clone()),
+            Some(path)
+        );
 
         app.handle_hub_event(HubEvent::Failed {
             file: "y.bin".into(),
@@ -440,12 +449,18 @@ mod tests {
         let rows = app.settings.dir_picker.as_ref().unwrap().rows();
         assert_eq!(rows[0], DirRow::UseThis);
         assert_eq!(rows[1], DirRow::Parent);
-        assert_eq!(rows[2..], [DirRow::Sub(dir.join("aa")), DirRow::Sub(dir.join("bb"))]);
+        assert_eq!(
+            rows[2..],
+            [DirRow::Sub(dir.join("aa")), DirRow::Sub(dir.join("bb"))]
+        );
 
         app.dir_picker_key(KeyCode::Down);
         app.dir_picker_key(KeyCode::Down);
         app.dir_picker_key(KeyCode::Enter); // enter aa/
-        assert_eq!(app.settings.dir_picker.as_ref().unwrap().cwd, dir.join("aa"));
+        assert_eq!(
+            app.settings.dir_picker.as_ref().unwrap().cwd,
+            dir.join("aa")
+        );
         app.dir_picker_key(KeyCode::Enter); // "use this folder"
         assert!(app.settings.dir_picker.is_none());
         assert_eq!(app.library.dir, dir.join("aa").canonicalize().unwrap());
@@ -508,7 +523,11 @@ mod tests {
         app.settings.move_prompt = None;
 
         app.set_models_dir_path(new.clone());
-        let prompt = app.settings.move_prompt.as_ref().expect("prompt should open");
+        let prompt = app
+            .settings
+            .move_prompt
+            .as_ref()
+            .expect("prompt should open");
         assert_eq!(prompt.count, 2);
         assert!(prompt.yes_selected);
 
@@ -602,10 +621,14 @@ mod tests {
         };
         app.choose_model(model.clone());
         assert_eq!(app.config.default_model.as_deref(), Some("ggml-x.bin"));
-        assert_eq!(app.library.selected.as_ref().map(|m| m.name.as_str()), Some("ggml-x.bin"));
+        assert_eq!(
+            app.library.selected.as_ref().map(|m| m.name.as_str()),
+            Some("ggml-x.bin")
+        );
         // lazy by design: selection is metadata; loading happens at job time
         assert!(
-            app.status.contains("loads when the next transcription starts"),
+            app.status
+                .contains("loads when the next transcription starts"),
             "{}",
             app.status
         );

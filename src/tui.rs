@@ -55,12 +55,9 @@ pub fn run(args: Args) -> Result<()> {
                 match event::read()? {
                     TermEvent::Key(key) if key.kind == KeyEventKind::Press => {
                         let mut consumed = false;
-                        let typing_in_modal =
-                            app.settings.open || app.picker.open || app.hub.open;
+                        let typing_in_modal = app.settings.open || app.picker.open || app.hub.open;
                         if let KeyCode::Char(c) = key.code {
-                            if !typing_in_modal
-                                && !key.modifiers.contains(KeyModifiers::CONTROL)
-                            {
+                            if !typing_in_modal && !key.modifiers.contains(KeyModifiers::CONTROL) {
                                 consumed = drops.feed_char(c);
                             }
                         } else if key.code == KeyCode::Enter {

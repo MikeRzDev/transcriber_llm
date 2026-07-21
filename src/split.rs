@@ -159,8 +159,7 @@ fn quietest_point(samples: &[f32], from: usize, to: usize, rate: usize) -> Optio
     let mut best: Option<(f32, usize)> = None;
     let mut i = from;
     while i + frame <= to.min(samples.len()) {
-        let rms =
-            (samples[i..i + frame].iter().map(|s| s * s).sum::<f32>() / frame as f32).sqrt();
+        let rms = (samples[i..i + frame].iter().map(|s| s * s).sum::<f32>() / frame as f32).sqrt();
         if best.map(|(b, _)| rms < b).unwrap_or(true) {
             best = Some((rms, i + frame / 2));
         }

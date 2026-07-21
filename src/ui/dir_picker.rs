@@ -48,7 +48,9 @@ pub(super) fn draw_dir_picker(frame: &mut Frame, app: &App) {
         .map(|row| match row {
             DirRow::UseThis => ListItem::new(Line::from(Span::styled(
                 " ✓ use this folder",
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             ))),
             DirRow::Parent => ListItem::new(Line::from(Span::styled(
                 " ../",

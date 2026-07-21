@@ -122,7 +122,7 @@ Models live in `~/Documents/llm_transcribe/models` by default on macOS (`~/llm_t
 ## Testing
 
 ```sh
-cargo test                    # 66 unit tests, fast and hermetic
+cargo test                    # 71 unit tests, fast and hermetic
 cargo test -- --ignored       # 3 transcription e2e tests (real model, Metal, ffmpeg,
                               # diarization) + 1 live Hugging Face search/download test
 ```
@@ -131,11 +131,17 @@ Unit tests cover audio decode/downmix/resampling, model discovery, config parsin
 
 ## Architecture
 
-- `src/transcribe.rs` — worker thread owning the `WhisperContext`; models load lazily on the first job, stay resident between jobs, and unload when the user switches models; segments/progress stream back over a channel, cancellation via whisper's abort callback
+The crate is a library (`transcribe_stt`) plus a thin binary: `src/main.rs` only parses the CLI (clap), dispatches through `lib::run`, and works around the ggml Metal atexit hang with `libc::_exit`.
+
+- `src/cli.rs` / `src/headless.rs` / `src/tui.rs` — the three entry paths: clap argument parsing, `--headless` transcription + `--download-test-model` (stderr progress, stdout segments), and the terminal lifecycle + render/event loop
+- `src/app.rs` + `src/app/` — application state and update logic (Elm-style). `App` is composed of per-concern sub-state, each with its logic and key handling beside it:
+  - `browser.rs` (`FileBrowser` — directory listing/navigation), `library.rs` (`ModelLibrary` + `ModelPicker`), `settings.rs` (`SettingsUi`, `SettingsRow`, directory picker, move-models prompt), `transcript.rs` (`TranscriptState` — segments, scroll/follow), `hub_state.rs` (`HubState` — the Model management modal), `events.rs` (worker-event handling incl. auto-export), `drop.rs` (drag-and-drop path parsing + the `DropDetector` key-burst fallback), `keys.rs` (the modal-priority key router)
+- `src/ui.rs` + `src/ui/` — rendering, one file per widget/modal, all reading `&App` (scroll clamping runs in the update phase, never during draw); `theme.rs` holds the shared colors/spinner/highlight style, `layout.rs` the screen regions
+- `src/transcribe.rs` + `src/transcribe/` — `worker.rs`: the worker thread owning the `WhisperContext`; models load lazily on the first job, stay resident between jobs, and unload when the user switches models; `run.rs`: one job start-to-finish — segments/progress stream back over a channel, cancellation via whisper's abort callback
 - `src/audio.rs` — symphonia decode (audio) → mono downmix → rubato sinc resample to 16 kHz; video and unsupported codecs go through ffmpeg, which streams raw 16 kHz mono f32 over stdout (no temp files)
-- `src/app.rs` / `src/ui.rs` — ratatui state and rendering (Elm-style: state in `App`, view in `ui::draw`)
-- `src/hub.rs` — Model management backend: Hugging Face search, repo file listing, and streaming downloads on worker threads (suggested list embedded from `assets/suggested_models.json`)
-- `src/split.rs` — long-audio chunk planner (engine capability descriptor, silence-aware cut placement, overlap fallback) + unit tests
-- `src/export.rs` — all transcript output formats (llm.md, JSON via serde_json, txt, srt) + unit tests
-- `src/config.rs` — persisted settings (`~/.config/transcribe-stt/config.toml`)
+- `src/hub.rs` + `src/hub/` — Model management backend: `api.rs` (Hugging Face search + repo file listing, serde-typed responses) and `download.rs` (streaming `.part` downloads with retry), each on worker threads; the suggested list is embedded from `assets/suggested_models.json`
+- `src/split.rs` — long-audio chunk planner (engine capability descriptor, silence-aware cut placement, overlap fallback)
+- `src/export.rs` — all transcript output formats (llm.md, JSON via serde_json, txt, srt)
+- `src/config.rs` — persisted settings (`~/.config/transcribe-stt/config.toml`), strict TOML via serde with a lenient fallback parser for legacy hand-edited files
+- `src/models.rs` / `src/format.rs` / `src/stats.rs` — local model scanning + default-model selection, shared time/size formatting, live process stats
 - whisper.cpp log output is routed through the `log` crate so it can't corrupt the TUI

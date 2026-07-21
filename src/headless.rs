@@ -60,7 +60,10 @@ pub fn download_test_model() -> Result<()> {
         eprintln!("already there: {}", dest.display());
         return Ok(());
     }
-    eprintln!("downloading {FILE} (~75 MB, smallest whisper model) to {}", dir.display());
+    eprintln!(
+        "downloading {FILE} (~75 MB, smallest whisper model) to {}",
+        dir.display()
+    );
 
     let (tx, rx) = channel();
     hub::download(
@@ -73,10 +76,9 @@ pub fn download_test_model() -> Result<()> {
     for event in rx {
         match event {
             hub::HubEvent::Progress { got, total, .. } => {
-                if total > 0 {
+                if let Some(pct) = (got * 100).checked_div(total) {
                     eprint!(
-                        "\r{:>3}%  {} / {}   ",
-                        got * 100 / total,
+                        "\r{pct:>3}%  {} / {}   ",
                         human_size(got),
                         human_size(total)
                     );

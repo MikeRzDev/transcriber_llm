@@ -1,17 +1,17 @@
 //! Hugging Face Hub integration for Model management: search repos, list
-//! their GGML/GGUF files, and download models — each on a background thread
-//! reporting back over a channel (same pattern as the transcribe worker).
+//! their GGML/GGUF files (`api`), and download models (`download`) — each
+//! on a background thread reporting back over a channel (same pattern as
+//! the transcribe worker).
 
-use std::io::{Read, Write};
+mod api;
+mod download;
+
+pub use api::{list_files, search};
+pub use download::download;
+
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
-use std::sync::Arc;
-use std::time::Duration;
 
 use serde::Deserialize;
-
-use crate::models::is_model_file;
 
 const SUGGESTED_JSON: &str = include_str!("../assets/suggested_models.json");
 
@@ -56,17 +56,45 @@ pub struct HubFile {
 
 #[derive(Debug)]
 pub enum HubEvent {
-    SearchResults { query: String, hits: Vec<RepoHit> },
-    SearchFailed { query: String, error: String },
-    Files { repo: String, files: Vec<HubFile> },
-    FilesFailed { repo: String, error: String },
-    Progress { file: String, got: u64, total: u64 },
-    Done { file: String, path: PathBuf },
-    Cancelled { file: String },
-    Failed { file: String, error: String },
+    SearchResults {
+        query: String,
+        hits: Vec<RepoHit>,
+    },
+    SearchFailed {
+        query: String,
+        error: String,
+    },
+    Files {
+        repo: String,
+        files: Vec<HubFile>,
+    },
+    FilesFailed {
+        repo: String,
+        error: String,
+    },
+    Progress {
+        file: String,
+        got: u64,
+        total: u64,
+    },
+    Done {
+        file: String,
+        path: PathBuf,
+    },
+    Cancelled {
+        file: String,
+    },
+    Failed {
+        file: String,
+        error: String,
+    },
     /// A background models-folder move finished (not hub-originated, but it
     /// rides the same channel into the render loop)
-    ModelsMoved { moved: usize, skipped: usize, failed: usize },
+    ModelsMoved {
+        moved: usize,
+        skipped: usize,
+        failed: usize,
+    },
 }
 
 /// The Metal backend runs the same GGML files as the CPU backend; this only
@@ -101,114 +129,6 @@ fn parse_suggested(json: &str) -> Vec<SuggestedModel> {
         .collect()
 }
 
-fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(30))
-        .user_agent(concat!(
-            env!("CARGO_PKG_NAME"),
-            "/",
-            env!("CARGO_PKG_VERSION")
-        ))
-        .build()
-}
-
-/// Search the Hub for repos matching `query`, most-downloaded first,
-/// restricted to the speech-to-text (automatic-speech-recognition)
-/// category. Untagged conversion repos won't appear. The receiver should
-/// drop results whose `query` no longer matches the input.
-pub fn search(query: String, tx: Sender<HubEvent>) {
-    std::thread::spawn(move || {
-        let url = format!(
-            "https://huggingface.co/api/models?search={}&pipeline_tag=automatic-speech-recognition&limit=25&sort=downloads&direction=-1",
-            urlencode(&query)
-        );
-        let result = (|| -> anyhow::Result<Vec<RepoHit>> {
-            let resp = agent().get(&url).call()?;
-            let v: serde_json::Value = serde_json::from_reader(resp.into_reader())?;
-            Ok(parse_search(&v))
-        })();
-        let _ = tx.send(match result {
-            Ok(hits) => HubEvent::SearchResults { query, hits },
-            // Errors cross the thread boundary as display strings
-            Err(error) => HubEvent::SearchFailed {
-                query,
-                error: format!("{error:#}"),
-            },
-        });
-    });
-}
-
-fn parse_search(v: &serde_json::Value) -> Vec<RepoHit> {
-    /// Search hits arrive with either `id` or the older `modelId`.
-    #[derive(Deserialize)]
-    struct RawHit {
-        id: Option<String>,
-        #[serde(rename = "modelId")]
-        model_id: Option<String>,
-        #[serde(default)]
-        downloads: u64,
-        #[serde(default)]
-        likes: u64,
-    }
-    let Some(arr) = v.as_array() else {
-        return Vec::new();
-    };
-    arr.iter()
-        .filter_map(|entry| serde_json::from_value::<RawHit>(entry.clone()).ok())
-        .filter_map(|hit| {
-            Some(RepoHit {
-                id: hit.id.or(hit.model_id)?,
-                downloads: hit.downloads,
-                likes: hit.likes,
-            })
-        })
-        .collect()
-}
-
-/// List the GGML/GGUF files (with sizes) inside a repo.
-pub fn list_files(repo: String, tx: Sender<HubEvent>) {
-    std::thread::spawn(move || {
-        let url = format!("https://huggingface.co/api/models/{repo}?blobs=true");
-        let result = (|| -> anyhow::Result<Vec<HubFile>> {
-            let resp = agent().get(&url).call()?;
-            let v: serde_json::Value = serde_json::from_reader(resp.into_reader())?;
-            Ok(parse_files(&v))
-        })();
-        let _ = tx.send(match result {
-            Ok(files) => HubEvent::Files { repo, files },
-            Err(error) => HubEvent::FilesFailed {
-                repo,
-                error: format!("{error:#}"),
-            },
-        });
-    });
-}
-
-fn parse_files(v: &serde_json::Value) -> Vec<HubFile> {
-    #[derive(Deserialize)]
-    struct RawSibling {
-        rfilename: String,
-        // `size` may be absent or null → unknown
-        size: Option<u64>,
-    }
-    let mut files: Vec<HubFile> = v["siblings"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|s| serde_json::from_value::<RawSibling>(s.clone()).ok())
-                .filter(|s| is_model_file(Path::new(&s.rfilename)))
-                .map(|s| HubFile {
-                    name: s.rfilename,
-                    size_bytes: s.size.unwrap_or(0),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    files.sort_by(|a, b| a.name.cmp(&b.name));
-    files
-}
-
 /// The on-disk name for a repo file: its final path component.
 pub fn dest_name(rfilename: &str) -> Option<String> {
     Path::new(rfilename)
@@ -216,126 +136,13 @@ pub fn dest_name(rfilename: &str) -> Option<String> {
         .map(|n| n.to_string_lossy().into_owned())
 }
 
-/// Stream `repo/file` into `dest_dir` as `<name>.part`, renaming into place
-/// when complete. Progress is reported every couple of MB; `cancel` stops
-/// the transfer and removes the partial file.
-pub fn download(
-    repo: String,
-    file: String,
-    dest_dir: PathBuf,
-    cancel: Arc<AtomicBool>,
-    tx: Sender<HubEvent>,
-) {
-    std::thread::spawn(move || {
-        let display = dest_name(&file).unwrap_or_else(|| file.clone());
-        let result = download_blocking(&repo, &file, &dest_dir, &cancel, &display, &tx);
-        let _ = tx.send(match result {
-            Ok(Some(path)) => HubEvent::Done {
-                file: display,
-                path,
-            },
-            Ok(None) => HubEvent::Cancelled { file: display },
-            Err(error) => HubEvent::Failed {
-                file: display,
-                error: format!("{error:#}"),
-            },
-        });
-    });
-}
-
-/// Transfer buffer size.
-const STREAM_BUF_BYTES: usize = 1 << 16;
-/// Progress events fire at most once per this many bytes.
-const PROGRESS_STEP_BYTES: u64 = 2 * 1024 * 1024;
-/// Transient-error retries before giving up.
-const MAX_ATTEMPTS: u64 = 3;
-
-fn download_blocking(
-    repo: &str,
-    file: &str,
-    dest_dir: &Path,
-    cancel: &AtomicBool,
-    display: &str,
-    tx: &Sender<HubEvent>,
-) -> anyhow::Result<Option<PathBuf>> {
-    std::fs::create_dir_all(dest_dir)?;
-    let base = dest_name(file).ok_or_else(|| anyhow::anyhow!("bad file name"))?;
-    let final_path = dest_dir.join(&base);
-    let part_path = dest_dir.join(format!("{base}.part"));
-
-    let url = format!("https://huggingface.co/{repo}/resolve/main/{file}");
-    // The HF CDN throws transient 503s; retry those (and transport errors)
-    // with backoff, but fail 4xx immediately — they won't get better.
-    let mut attempt = 0;
-    let resp = loop {
-        attempt += 1;
-        match agent().get(&url).call() {
-            Ok(resp) => break resp,
-            Err(ureq::Error::Status(code, _)) if code < 500 => {
-                anyhow::bail!("status code {code} for {url}");
-            }
-            Err(e) => {
-                if attempt >= MAX_ATTEMPTS || cancel.load(Ordering::Relaxed) {
-                    return Err(e.into());
-                }
-                std::thread::sleep(Duration::from_secs(2 * attempt));
-            }
-        }
-    };
-    let total: u64 = resp
-        .header("content-length")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-
-    let mut reader = resp.into_reader();
-    let mut out = std::fs::File::create(&part_path)?;
-    let mut buf = [0u8; STREAM_BUF_BYTES];
-    let mut got: u64 = 0;
-    let mut last_report: u64 = 0;
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            drop(out);
-            let _ = std::fs::remove_file(&part_path);
-            return Ok(None);
-        }
-        let n = reader.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        out.write_all(&buf[..n])?;
-        got += n as u64;
-        if got - last_report >= PROGRESS_STEP_BYTES {
-            last_report = got;
-            let _ = tx.send(HubEvent::Progress {
-                file: display.to_string(),
-                got,
-                total,
-            });
-        }
-    }
-    out.flush()?;
-    drop(out);
-    if total > 0 && got < total {
-        let _ = std::fs::remove_file(&part_path);
-        anyhow::bail!("connection closed early ({got} of {total} bytes)");
-    }
-    std::fs::rename(&part_path, &final_path)?;
-    Ok(Some(final_path))
-}
-
-/// Percent-encode everything outside the RFC 3986 unreserved set.
-fn urlencode(s: &str) -> String {
-    const QUERY: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
-        .remove(b'-')
-        .remove(b'.')
-        .remove(b'_')
-        .remove(b'~');
-    percent_encoding::utf8_percent_encode(s, QUERY).to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::is_model_file;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    use std::time::Duration;
 
     #[test]
     fn suggested_json_parses_and_supported_entries_are_models() {
@@ -357,54 +164,10 @@ mod tests {
     }
 
     #[test]
-    fn search_response_parses_both_id_shapes() {
-        let v: serde_json::Value = serde_json::from_str(
-            r#"[
-                {"id": "ggerganov/whisper.cpp", "downloads": 123, "likes": 7},
-                {"modelId": "x/y"},
-                {"downloads": 5}
-            ]"#,
-        )
-        .unwrap();
-        let hits = parse_search(&v);
-        assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].id, "ggerganov/whisper.cpp");
-        assert_eq!(hits[0].downloads, 123);
-        assert_eq!(hits[1].id, "x/y");
-        assert_eq!(hits[1].downloads, 0);
-    }
-
-    #[test]
-    fn file_listing_keeps_only_ggml_family_sorted() {
-        let v: serde_json::Value = serde_json::from_str(
-            r#"{"siblings": [
-                {"rfilename": "README.md", "size": 10},
-                {"rfilename": "z.gguf", "size": 2},
-                {"rfilename": "ggml-tiny.bin", "size": 75000000},
-                {"rfilename": "encoder.mlmodelc.zip", "size": 9},
-                {"rfilename": "sub/dir/model.bin"}
-            ]}"#,
-        )
-        .unwrap();
-        let files = parse_files(&v);
-        let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
-        assert_eq!(names, vec!["ggml-tiny.bin", "sub/dir/model.bin", "z.gguf"]);
-        assert_eq!(files[0].size_bytes, 75_000_000);
-        assert_eq!(files[1].size_bytes, 0); // size missing → unknown
-    }
-
-    #[test]
     fn dest_name_strips_repo_subdirs() {
         assert_eq!(dest_name("ggml-tiny.bin").as_deref(), Some("ggml-tiny.bin"));
         assert_eq!(dest_name("sub/dir/model.bin").as_deref(), Some("model.bin"));
         assert_eq!(dest_name(""), None);
-    }
-
-    #[test]
-    fn urlencode_escapes_query_text() {
-        assert_eq!(urlencode("whisper large-v3"), "whisper%20large-v3");
-        assert_eq!(urlencode("a&b=c"), "a%26b%3Dc");
-        assert_eq!(urlencode("safe-._~09AZ"), "safe-._~09AZ");
     }
 
     /// Live network test: search → list files → download the smallest real

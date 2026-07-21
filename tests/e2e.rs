@@ -15,7 +15,12 @@ fn headless_transcribes_demo_wav() {
     assert!(Path::new("samples/demo.wav").exists());
 
     let output = Command::new(env!("CARGO_BIN_EXE_transcribe-stt"))
-        .args(["--headless", "-m", "models/ggml-large-v3.bin", "samples/demo.wav"])
+        .args([
+            "--headless",
+            "-m",
+            "models/ggml-large-v3.bin",
+            "samples/demo.wav",
+        ])
         .output()
         .expect("failed to run transcribe-stt");
 
