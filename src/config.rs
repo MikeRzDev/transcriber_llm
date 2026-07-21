@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 use crate::split::SplitMode;
 
 /// Persisted settings, stored as simple `key = value` lines in
@@ -52,7 +54,67 @@ pub fn default_output_dir() -> PathBuf {
     default_base().join("output")
 }
 
+/// Raw mirror of the on-disk file: every field optional and stringly so a
+/// well-formed TOML file always deserializes regardless of which keys it
+/// holds. Normalization (empty values, "auto" language, unknown split
+/// modes) happens in `into_config`.
+#[derive(Default, Deserialize, Serialize)]
+struct ConfigToml {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    models_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diarize: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    split_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
+}
+
+impl ConfigToml {
+    fn into_config(self) -> Config {
+        fn non_empty(value: Option<String>) -> Option<String> {
+            value.filter(|v| !v.is_empty())
+        }
+        Config {
+            models_dir: non_empty(self.models_dir).map(PathBuf::from),
+            output_dir: non_empty(self.output_dir).map(PathBuf::from),
+            default_model: non_empty(self.default_model),
+            diarize: self.diarize.unwrap_or(false),
+            language: non_empty(self.language).filter(|lang| lang != "auto"),
+            split_mode: non_empty(self.split_mode)
+                .and_then(|mode| SplitMode::parse(&mode))
+                .unwrap_or_default(),
+        }
+    }
+
+    fn from_config(config: &Config) -> Self {
+        Self {
+            models_dir: config.models_dir.as_ref().map(|p| p.display().to_string()),
+            output_dir: config.output_dir.as_ref().map(|p| p.display().to_string()),
+            default_model: config.default_model.clone(),
+            diarize: config.diarize.then_some(true),
+            split_mode: (config.split_mode != SplitMode::Auto)
+                .then(|| config.split_mode.as_str().to_string()),
+            language: config.language.clone(),
+        }
+    }
+}
+
 fn parse_str(contents: &str) -> Config {
+    match toml::from_str::<ConfigToml>(contents) {
+        Ok(raw) => raw.into_config(),
+        // Legacy hand-edited files may hold unquoted values or stray lines
+        // that strict TOML rejects; those keep loading via the original
+        // line parser.
+        Err(_) => parse_lenient(contents),
+    }
+}
+
+fn parse_lenient(contents: &str) -> Config {
     let mut config = Config::default();
     for line in contents.lines() {
         let line = line.trim();
@@ -84,26 +146,9 @@ fn parse_str(contents: &str) -> Config {
 }
 
 fn render(config: &Config) -> String {
-    let mut out = String::from("# transcribe-stt settings\n");
-    if let Some(dir) = &config.models_dir {
-        out.push_str(&format!("models_dir = \"{}\"\n", dir.display()));
-    }
-    if let Some(dir) = &config.output_dir {
-        out.push_str(&format!("output_dir = \"{}\"\n", dir.display()));
-    }
-    if let Some(model) = &config.default_model {
-        out.push_str(&format!("default_model = \"{model}\"\n"));
-    }
-    if config.diarize {
-        out.push_str("diarize = true\n");
-    }
-    if config.split_mode != SplitMode::Auto {
-        out.push_str(&format!("split_mode = \"{}\"\n", config.split_mode.as_str()));
-    }
-    if let Some(lang) = &config.language {
-        out.push_str(&format!("language = \"{lang}\"\n"));
-    }
-    out
+    // Serializing a struct of scalars cannot fail in practice.
+    let body = toml::to_string(&ConfigToml::from_config(config)).unwrap_or_default();
+    format!("# transcribe-stt settings\n{body}")
 }
 
 pub fn load() -> Config {
