@@ -20,9 +20,9 @@ pub enum SettingsRow {
     ExportFormats,
     ModelManagement,
     Diarize,
-    DiarizeSpeakers,
     SplitMode,
     Language,
+    HfToken,
 }
 
 impl SettingsRow {
@@ -33,9 +33,9 @@ impl SettingsRow {
         Self::ExportFormats,
         Self::ModelManagement,
         Self::Diarize,
-        Self::DiarizeSpeakers,
         Self::SplitMode,
         Self::Language,
+        Self::HfToken,
     ];
 
     pub fn next(self) -> Self {
@@ -56,8 +56,8 @@ pub struct SettingsUi {
     pub selected: SettingsRow,
     /// Some(text) while the language code is being edited
     pub language_input: Option<String>,
-    /// Some(text) while the diarization speaker count is being edited
-    pub speakers_input: Option<String>,
+    /// Some(text) while the Hugging Face token is being edited
+    pub hf_token_input: Option<String>,
     /// Some while a folder is being chosen via the directory browser
     pub dir_picker: Option<DirPicker>,
     /// Some while asking whether to move models into the new folder
@@ -72,7 +72,7 @@ impl SettingsUi {
             open: false,
             selected: SettingsRow::DefaultModel,
             language_input: None,
-            speakers_input: None,
+            hf_token_input: None,
             dir_picker: None,
             move_prompt: None,
             formats_cursor: None,
@@ -196,17 +196,17 @@ impl App {
             }
             return;
         }
-        if let Some(input) = &mut self.settings.speakers_input {
+        if let Some(input) = &mut self.settings.hf_token_input {
             match code {
-                KeyCode::Char(c) if c.is_ascii_digit() && input.len() < 2 => input.push(c),
+                KeyCode::Char(c) if !c.is_whitespace() => input.push(c),
                 KeyCode::Backspace => {
                     input.pop();
                 }
                 KeyCode::Enter => {
-                    let text = self.settings.speakers_input.take().unwrap_or_default();
-                    self.set_diarize_speakers(&text);
+                    let text = self.settings.hf_token_input.take().unwrap_or_default();
+                    self.set_hf_token(&text);
                 }
-                KeyCode::Esc => self.settings.speakers_input = None,
+                KeyCode::Esc => self.settings.hf_token_input = None,
                 _ => {}
             }
             return;
@@ -246,18 +246,14 @@ impl App {
                     self.open_hub();
                 }
                 SettingsRow::Diarize => self.cycle_diarize(),
-                SettingsRow::DiarizeSpeakers => {
-                    self.settings.speakers_input = Some(
-                        self.config
-                            .diarize_speakers
-                            .map(|n| n.to_string())
-                            .unwrap_or_default(),
-                    )
-                }
                 SettingsRow::SplitMode => self.cycle_split_mode(),
                 SettingsRow::Language => {
                     self.settings.language_input =
                         Some(self.config.language.clone().unwrap_or_default())
+                }
+                SettingsRow::HfToken => {
+                    self.settings.hf_token_input =
+                        Some(self.config.hf_token.clone().unwrap_or_default())
                 }
             },
             _ => {}
@@ -272,12 +268,24 @@ impl App {
         self.config.diarize = self.config.diarize.next();
         let _ = config::save(&self.config);
         self.status = self.diarize_status();
+        self.offer_tdrz_download();
     }
 
-    /// Set the known speaker count for the embedding diarizer. Empty or
-    /// zero means auto-detect; a fixed count pins the clustering to
-    /// exactly that many speakers, which improves labels when the count
-    /// really is known.
+    /// If the strategy just selected runs on the tdrz model and it is
+    /// missing, offer to download it right away instead of leaving the
+    /// user to find it in Model management.
+    pub(crate) fn offer_tdrz_download(&mut self) {
+        use crate::diarize::DiarizeMethod;
+        let method = self.resolved_diarize_method();
+        if method == DiarizeMethod::Tdrz && self.find_tdrz_model().is_none() {
+            self.tdrz_prompt = Some(crate::app::TdrzDownloadPrompt { yes_selected: true });
+        }
+    }
+
+    /// Set the known speaker count for the embedding/pyannote diarizers.
+    /// Empty or zero means auto-detect; a fixed count pins the clustering
+    /// to exactly that many speakers, which improves labels when the
+    /// count really is known.
     pub fn set_diarize_speakers(&mut self, input: &str) {
         let text = input.trim();
         if text.is_empty() || text == "0" {
@@ -289,8 +297,7 @@ impl App {
                 Ok(n) if (1..=26).contains(&n) => {
                     self.config.diarize_speakers = Some(n);
                     self.status = format!(
-                        "Diarization speakers: exactly {n} (embedding strategy; \
-                         clustering is pinned to this count)"
+                        "Diarization speakers: exactly {n} — clustering is pinned to this count"
                     );
                 }
                 _ => {
@@ -298,6 +305,24 @@ impl App {
                     return;
                 }
             }
+        }
+        let _ = config::save(&self.config);
+    }
+
+    /// Set (or clear) the Hugging Face token and persist it. The token is
+    /// exported as `HF_TOKEN` for this process so gated downloads and the
+    /// pyannote runner pick it up immediately.
+    pub fn set_hf_token(&mut self, input: &str) {
+        let token = input.trim();
+        if token.is_empty() {
+            self.config.hf_token = None;
+            std::env::remove_var("HF_TOKEN");
+            self.status = "Hugging Face token cleared".into();
+        } else {
+            self.config.hf_token = Some(token.to_string());
+            std::env::set_var("HF_TOKEN", token);
+            self.status =
+                "Hugging Face token saved — gated models (pyannote) can now authenticate".into();
         }
         let _ = config::save(&self.config);
     }

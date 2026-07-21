@@ -22,6 +22,10 @@ impl App {
             self.naming_key(code);
             return;
         }
+        if self.tdrz_prompt.is_some() {
+            self.tdrz_prompt_key(code);
+            return;
+        }
         if self.hub.open {
             if !modifiers.contains(KeyModifiers::CONTROL) {
                 self.hub_key(code);
@@ -44,7 +48,56 @@ impl App {
             self.settings_key(code);
             return;
         }
+        if self.speakers_input.is_some() {
+            self.speakers_key(code);
+            return;
+        }
         self.main_key(code);
+    }
+
+    /// Keys for the diarization speaker-count input (`p` on the base screen).
+    fn speakers_key(&mut self, code: KeyCode) {
+        let Some(input) = &mut self.speakers_input else {
+            return;
+        };
+        match code {
+            KeyCode::Char(c) if c.is_ascii_digit() && input.len() < 2 => input.push(c),
+            KeyCode::Backspace => {
+                input.pop();
+            }
+            KeyCode::Enter => {
+                let text = self.speakers_input.take().unwrap_or_default();
+                self.set_diarize_speakers(&text);
+            }
+            KeyCode::Esc => self.speakers_input = None,
+            _ => {}
+        }
+    }
+
+    /// Open the speaker-count input (`p`). The count only steers the
+    /// clustering strategies, so anything else explains itself instead.
+    fn open_speakers_input(&mut self) {
+        use crate::diarize::DiarizeMethod;
+        match self.resolved_diarize_method() {
+            DiarizeMethod::None => {
+                self.status =
+                    "Speaker count needs diarization — press d to select a strategy first".into();
+            }
+            DiarizeMethod::Tdrz => {
+                self.status =
+                    "TinyDiarize always labels 2 speakers — the count applies to the \
+                     embeddings/pyannote strategies (d cycles)"
+                        .into();
+            }
+            DiarizeMethod::Embedding | DiarizeMethod::Pyannote => {
+                self.speakers_input = Some(
+                    self.config
+                        .diarize_speakers
+                        .map(|n| n.to_string())
+                        .unwrap_or_default(),
+                );
+            }
+        }
     }
 
     /// Keys for the "transcribe this file?" confirmation dialog.
@@ -78,6 +131,57 @@ impl App {
         }
     }
 
+    /// Keys for the "download the tdrz model?" offer.
+    fn tdrz_prompt_key(&mut self, code: KeyCode) {
+        let Some(prompt) = &mut self.tdrz_prompt else {
+            return;
+        };
+        match code {
+            KeyCode::Esc | KeyCode::Char('n') => {
+                self.tdrz_prompt = None;
+                self.status = format!(
+                    "Download skipped — TinyDiarize stays unavailable until {} exists",
+                    crate::diarize::TDRZ_FILE
+                );
+            }
+            KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Tab
+            | KeyCode::Char('h')
+            | KeyCode::Char('l') => prompt.yes_selected = !prompt.yes_selected,
+            KeyCode::Char('y') => self.confirm_tdrz_download(),
+            KeyCode::Enter => {
+                if prompt.yes_selected {
+                    self.confirm_tdrz_download();
+                } else {
+                    self.tdrz_prompt = None;
+                    self.status = format!(
+                        "Download skipped — TinyDiarize stays unavailable until {} exists",
+                        crate::diarize::TDRZ_FILE
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Yes on the tdrz offer: open Model management with the download
+    /// already running so its gauge/pause/cancel apply, and the tdrz row
+    /// in the diarization section selected so the transfer is in view.
+    fn confirm_tdrz_download(&mut self) {
+        self.tdrz_prompt = None;
+        self.open_hub();
+        self.hub_select_tdrz_row();
+        if self.hub.download.is_some() {
+            self.hub.info = "Another download is already running — wait or cancel it first".into();
+            return;
+        }
+        self.hub_start_download(
+            crate::diarize::TDRZ_REPO.to_string(),
+            crate::diarize::TDRZ_FILE.to_string(),
+        );
+    }
+
     fn main_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Char('q') => self.should_quit = true,
@@ -93,6 +197,7 @@ impl App {
                 self.settings.open = true;
             }
             KeyCode::Char('d') => self.cycle_diarize(),
+            KeyCode::Char('p') => self.open_speakers_input(),
             KeyCode::Char('n') => self.open_speaker_naming(),
             KeyCode::Char('l') => {
                 // Right pane: transcript ⇄ job log

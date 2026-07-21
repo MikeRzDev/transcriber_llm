@@ -24,6 +24,8 @@ pub fn run(args: &Args) -> Result<()> {
     };
 
     let mut cfg = config::load();
+    // The configured HF token reaches the diarizers via the environment
+    config::apply_hf_token(&cfg);
     // A CLI speaker count overrides the configured one for this run
     if args.speakers.is_some() {
         cfg.diarize_speakers = args.speakers.filter(|n| *n > 0);

@@ -24,6 +24,10 @@ pub struct Config {
     pub diarize_speakers: Option<u8>,
     /// ISO 639-1 code passed to whisper; None = auto-detect
     pub language: Option<String>,
+    /// Hugging Face access token for gated models (pyannote community-1)
+    /// and authenticated hub downloads; None = rely on the environment /
+    /// `hf auth login`
+    pub hf_token: Option<String>,
     /// Chunking strategy for long audio
     pub split_mode: SplitMode,
     /// Formats written after each transcription — never empty
@@ -40,8 +44,22 @@ impl Default for Config {
             diarize_models: DiarizeModelChoice::default(),
             diarize_speakers: None,
             language: None,
+            hf_token: None,
             split_mode: SplitMode::default(),
             export_formats: ExportFormat::ALL.to_vec(),
+        }
+    }
+}
+
+/// Export the configured Hugging Face token into the process environment
+/// (`HF_TOKEN`), where everything that needs it — the pyannote runner's
+/// Python subprocess, the hub's authenticated downloads, the HF stack's
+/// own token discovery — already looks. An HF_TOKEN set by the user's
+/// shell wins over the config value.
+pub fn apply_hf_token(config: &Config) {
+    if std::env::var_os("HF_TOKEN").is_none() {
+        if let Some(token) = &config.hf_token {
+            std::env::set_var("HF_TOKEN", token);
         }
     }
 }
@@ -133,6 +151,8 @@ struct ConfigToml {
     #[serde(skip_serializing_if = "Option::is_none")]
     language: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    hf_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     export_formats: Option<String>,
 }
 
@@ -159,6 +179,7 @@ impl ConfigToml {
             },
             diarize_speakers: self.diarize_speakers.filter(|n| *n > 0),
             language: non_empty(self.language).filter(|lang| lang != "auto"),
+            hf_token: non_empty(self.hf_token),
             split_mode: non_empty(self.split_mode)
                 .and_then(|mode| SplitMode::parse(&mode))
                 .unwrap_or_default(),
@@ -184,6 +205,7 @@ impl ConfigToml {
             split_mode: (config.split_mode != SplitMode::Auto)
                 .then(|| config.split_mode.as_str().to_string()),
             language: config.language.clone(),
+            hf_token: config.hf_token.clone(),
             export_formats: (config.export_formats != ExportFormat::ALL)
                 .then(|| render_formats(&config.export_formats)),
         }
@@ -238,6 +260,7 @@ fn parse_lenient(contents: &str) -> Config {
                 }
             }
             "language" if value != "auto" => config.language = Some(value.to_string()),
+            "hf_token" => config.hf_token = Some(value.to_string()),
             "export_formats" => config.export_formats = parse_formats(value),
             _ => {}
         }
@@ -299,6 +322,7 @@ mod tests {
             },
             diarize_speakers: Some(3),
             language: Some("es".into()),
+            hf_token: Some("hf_abc123".into()),
             split_mode: SplitMode::Silence,
             export_formats: vec![ExportFormat::LlmMd, ExportFormat::Srt],
         };

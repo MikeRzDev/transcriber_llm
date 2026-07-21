@@ -12,8 +12,10 @@ mod model_picker;
 mod move_prompt;
 mod naming;
 mod settings;
+mod speakers;
 mod start_prompt;
 mod status;
+mod tdrz_prompt;
 mod theme;
 mod transcript;
 
@@ -59,8 +61,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if app.settings.move_prompt.is_some() {
         move_prompt::draw_move_prompt(frame, app);
     }
+    if app.speakers_input.is_some() {
+        speakers::draw_speakers_prompt(frame, app);
+    }
     if app.naming.is_some() {
         naming::draw_speaker_naming(frame, app);
+    }
+    if app.tdrz_prompt.is_some() {
+        tdrz_prompt::draw_tdrz_prompt(frame, app);
     }
     // Topmost: it can open over any other modal (e.g. a file dropped
     // while the hub is up) and its keys take priority

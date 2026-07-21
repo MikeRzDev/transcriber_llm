@@ -112,14 +112,20 @@ fn run_with_diarize_postpass(
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_default();
-    match diarize::sherpa::run(
-        &job.audio,
-        &models_dir,
-        &job.diarize_models,
-        job.diarize_speakers,
-        events,
-        cancel,
-    ) {
+    let turns = match job.diarize {
+        DiarizeMethod::Pyannote => {
+            diarize::pyannote::run(&job.audio, job.diarize_speakers, events, cancel)
+        }
+        _ => diarize::sherpa::run(
+            &job.audio,
+            &models_dir,
+            &job.diarize_models,
+            job.diarize_speakers,
+            events,
+            cancel,
+        ),
+    };
+    match turns {
         Ok(Some(turns)) => {
             let labeled = diarize::assign_speakers(&segments, &turns);
             let _ = events.send(Event::SegmentsFinal(labeled));
@@ -158,7 +164,11 @@ pub fn spawn(events: Sender<Event>) -> Transcriber {
             match msg {
                 WorkerMsg::Job(job) => {
                     let engine = backends.for_model(&job.model);
-                    let result = if job.diarize == DiarizeMethod::Embedding {
+                    let post_pass = matches!(
+                        job.diarize,
+                        DiarizeMethod::Embedding | DiarizeMethod::Pyannote
+                    );
+                    let result = if post_pass {
                         run_with_diarize_postpass(engine, &job, &events, &worker_cancel)
                     } else {
                         engine.run(&job, &events, &worker_cancel)

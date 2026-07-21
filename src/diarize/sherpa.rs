@@ -260,7 +260,7 @@ fn ensure_models(
     cancel: &Arc<AtomicBool>,
 ) -> anyhow::Result<Option<()>> {
     let dir = dir(models_dir);
-    std::fs::create_dir_all(&dir)?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     for model in models {
         let dest = dir.join(model.local);
         if dest.is_file() {
@@ -426,57 +426,12 @@ pub fn run(
 
     let text = std::fs::read_to_string(&scratch.out)
         .context("diarizer exited successfully but wrote no output")?;
-    Ok(Some(parse_turns(&text)?))
-}
-
-/// The runner's JSON: `[{"start": seconds, "end": seconds, "speaker": n}]`.
-fn parse_turns(text: &str) -> anyhow::Result<Vec<SpeakerTurn>> {
-    #[derive(serde::Deserialize)]
-    struct RawTurn {
-        start: f64,
-        end: f64,
-        speaker: u32,
-    }
-    let raw: Vec<RawTurn> = serde_json::from_str(text).context("parsing diarizer JSON output")?;
-    Ok(raw
-        .into_iter()
-        .map(|t| SpeakerTurn {
-            start_ms: (t.start * 1000.0).round() as i64,
-            end_ms: (t.end * 1000.0).round() as i64,
-            speaker: t.speaker.min(u8::MAX as u32) as u8,
-        })
-        .collect())
+    Ok(Some(super::parse_turns(&text)?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_turns_maps_seconds_to_ms() {
-        let turns = parse_turns(
-            r#"[{"start": 0.5, "end": 2.25, "speaker": 0},
-                {"start": 2.25, "end": 4.0, "speaker": 3}]"#,
-        )
-        .unwrap();
-        assert_eq!(
-            turns,
-            vec![
-                SpeakerTurn {
-                    start_ms: 500,
-                    end_ms: 2250,
-                    speaker: 0
-                },
-                SpeakerTurn {
-                    start_ms: 2250,
-                    end_ms: 4000,
-                    speaker: 3
-                },
-            ]
-        );
-        assert!(parse_turns("[]").unwrap().is_empty());
-        assert!(parse_turns("not json").is_err());
-    }
 
     #[test]
     fn requirements_track_model_files_on_disk() {

@@ -59,6 +59,13 @@ pub enum WorkState {
     },
 }
 
+/// Yes/No dialog offering to download the tdrz model: opened whenever a
+/// tdrz-based strategy is selected (or a job needs it) while the model
+/// is missing. "Yes" opens Model management with the download running.
+pub struct TdrzDownloadPrompt {
+    pub yes_selected: bool,
+}
+
 /// Yes/No dialog shown before a transcription job starts.
 pub struct StartPrompt {
     pub audio: PathBuf,
@@ -95,6 +102,10 @@ pub struct App {
     pub start_prompt: Option<StartPrompt>,
     /// Some while the post-transcription speaker-naming dialog is open (`n`)
     pub naming: Option<SpeakerNaming>,
+    /// Some(text) while the diarization speaker count is being edited (`p`)
+    pub speakers_input: Option<String>,
+    /// Some while offering to download the missing tdrz model
+    pub tdrz_prompt: Option<TdrzDownloadPrompt>,
     /// Timestamped record of everything since the first file was loaded
     pub job_log: JobLog,
     /// Right pane shows the job log instead of the transcript (`l`)
@@ -108,6 +119,7 @@ pub struct App {
 impl App {
     pub fn new(start_dir: PathBuf, model: Option<PathBuf>, transcriber: Transcriber) -> Self {
         let app_config = config::load();
+        config::apply_hf_token(&app_config);
         let models_dir = config::resolve_models_dir(&app_config);
         let output_dir = config::resolve_output_dir(&app_config);
         let models_list = models::scan_models(&models_dir);
@@ -150,6 +162,8 @@ impl App {
             hub: HubState::new(),
             start_prompt: None,
             naming: None,
+            speakers_input: None,
+            tdrz_prompt: None,
             job_log: JobLog::new(),
             // The log view is the default; `l` switches to the transcript
             show_log: true,
@@ -163,15 +177,20 @@ impl App {
         self.work != WorkState::Idle
     }
 
+    /// The method the configured strategy resolves to for the current
+    /// model selection — pure and cheap, safe per rendered frame.
+    pub fn resolved_diarize_method(&self) -> DiarizeMethod {
+        self.config
+            .diarize
+            .resolve(self.library.selected.as_ref().map(|m| m.name.as_str()))
+    }
+
     /// The diarization plan for the current model selection: the method
     /// the configured strategy resolves to, plus what it still needs
     /// downloaded (None = ready). May probe the Python runtime — call on
     /// user actions, not per rendered frame.
     pub fn diarize_plan(&self) -> (DiarizeMethod, Option<String>) {
-        let method = self
-            .config
-            .diarize
-            .resolve(self.library.selected.as_ref().map(|m| m.name.as_str()));
+        let method = self.resolved_diarize_method();
         let note = diarize::download_note(
             method,
             &self.library.models,
@@ -209,10 +228,21 @@ impl App {
         }
         // Resolve the diarization strategy against the selected model;
         // the tdrz method transcribes with the tdrz model itself
-        let method = self
-            .config
-            .diarize
-            .resolve(self.library.selected.as_ref().map(|m| m.name.as_str()));
+        let method = self.resolved_diarize_method();
+        // The pyannote model is gated: without a token the job would only
+        // fail later at the runner's token gate, so stop here, open the
+        // consent page, and point at the settings row that stores a token.
+        if method == DiarizeMethod::Pyannote && !crate::diarize::pyannote::hf_token_available() {
+            crate::hub::open_consent_page(crate::diarize::pyannote::MODEL);
+            self.status = format!(
+                "{} is gated — accept its terms on the page just opened in your browser, \
+                 then set your token in s → HF token (or press d for another strategy)",
+                crate::diarize::pyannote::MODEL
+            );
+            self.job_log
+                .push("pyannote blocked: no Hugging Face token — consent page opened");
+            return;
+        }
         let model = if method == DiarizeMethod::Tdrz {
             let selected_tdrz = self
                 .library
@@ -228,6 +258,8 @@ impl App {
                         diarize::TDRZ_FILE,
                         diarize::TDRZ_SIZE
                     );
+                    // Offer the download instead of dead-ending the job
+                    self.tdrz_prompt = Some(TdrzDownloadPrompt { yes_selected: true });
                     return;
                 }
             }
@@ -480,6 +512,7 @@ mod tests {
         assert!(app.status.contains("Auto"), "{}", app.status);
 
         // tdrz with no tdrz model: the status names the exact download
+        // and a dialog offers to fetch it right away
         app.cycle_diarize();
         assert_eq!(app.config.diarize, DiarizeStrategy::Tdrz);
         assert!(
@@ -492,10 +525,20 @@ mod tests {
             "{}",
             app.status
         );
+        assert!(app.tdrz_prompt.is_some(), "download offer should open");
+        // declining leaves the strategy set but downloads nothing
+        app.on_key(crossterm::event::KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        assert!(app.tdrz_prompt.is_none());
+        assert!(app.hub.download.is_none());
+        assert!(app.status.contains("skipped"), "{}", app.status);
 
         app.cycle_diarize();
         assert_eq!(app.config.diarize, DiarizeStrategy::Embedding);
         assert!(app.status.contains("embeddings"), "{}", app.status);
+
+        app.cycle_diarize();
+        assert_eq!(app.config.diarize, DiarizeStrategy::Pyannote);
+        assert!(app.status.contains("Pyannote"), "{}", app.status);
 
         app.cycle_diarize();
         assert_eq!(app.config.diarize, DiarizeStrategy::Off);
@@ -553,6 +596,175 @@ mod tests {
         app.set_diarize_speakers("99");
         assert_eq!(app.config.diarize_speakers, Some(2));
         assert!(app.status.contains("1–26"), "{}", app.status);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn speaker_count_hotkey_gates_on_the_strategy() {
+        use crate::diarize::DiarizeStrategy;
+        use crossterm::event::KeyModifiers;
+        let _guard = lock_env(); // Enter persists the count
+        let dir = tempdir();
+        std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
+        let mut app = test_app(dir.clone());
+        app.library.selected = None;
+
+        // Off: the key explains instead of opening the input
+        app.config.diarize = DiarizeStrategy::Off;
+        app.on_key(KeyCode::Char('p'), KeyModifiers::NONE);
+        assert!(app.speakers_input.is_none());
+        assert!(app.status.contains("diarization"), "{}", app.status);
+
+        // TinyDiarize is fixed at 2 speakers — no count to set
+        app.config.diarize = DiarizeStrategy::Tdrz;
+        app.on_key(KeyCode::Char('p'), KeyModifiers::NONE);
+        assert!(app.speakers_input.is_none());
+        assert!(app.status.contains("2 speakers"), "{}", app.status);
+
+        // A clustering strategy opens the input; digits only, Enter saves
+        app.config.diarize = DiarizeStrategy::Embedding;
+        app.on_key(KeyCode::Char('p'), KeyModifiers::NONE);
+        assert_eq!(app.speakers_input.as_deref(), Some(""));
+        app.on_key(KeyCode::Char('x'), KeyModifiers::NONE); // not a digit
+        assert_eq!(app.speakers_input.as_deref(), Some(""));
+        app.on_key(KeyCode::Char('3'), KeyModifiers::NONE);
+        app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(app.speakers_input.is_none());
+        assert_eq!(app.config.diarize_speakers, Some(3));
+
+        // Reopening prefills the saved count; Esc keeps it untouched
+        app.on_key(KeyCode::Char('p'), KeyModifiers::NONE);
+        assert_eq!(app.speakers_input.as_deref(), Some("3"));
+        app.on_key(KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app.speakers_input.is_none());
+        assert_eq!(app.config.diarize_speakers, Some(3));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn hf_token_setting_persists_and_reaches_the_environment() {
+        let _guard = lock_env(); // both files and HF_TOKEN are process-global
+        let dir = tempdir();
+        std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
+        let shell_token = std::env::var_os("HF_TOKEN");
+        std::env::remove_var("HF_TOKEN");
+        let mut app = test_app(dir.clone());
+
+        // Enter on the row opens the input; typing + Enter saves it
+        app.settings.open = true;
+        app.settings.selected = SettingsRow::HfToken;
+        app.settings_key(KeyCode::Enter);
+        assert_eq!(app.settings.hf_token_input.as_deref(), Some(""));
+        for c in "hf_abc123".chars() {
+            app.settings_key(KeyCode::Char(c));
+        }
+        app.settings_key(KeyCode::Enter);
+        assert!(app.settings.hf_token_input.is_none());
+        assert_eq!(app.config.hf_token.as_deref(), Some("hf_abc123"));
+        // exported for the pyannote runner and authenticated downloads
+        assert_eq!(std::env::var("HF_TOKEN").as_deref(), Ok("hf_abc123"));
+        // and persisted to the config file
+        assert_eq!(config::load().hf_token.as_deref(), Some("hf_abc123"));
+
+        // Reopening prefills the token; emptying it clears everywhere
+        app.settings_key(KeyCode::Enter);
+        assert_eq!(app.settings.hf_token_input.as_deref(), Some("hf_abc123"));
+        for _ in 0.."hf_abc123".len() {
+            app.settings_key(KeyCode::Backspace);
+        }
+        app.settings_key(KeyCode::Enter);
+        assert_eq!(app.config.hf_token, None);
+        assert!(std::env::var_os("HF_TOKEN").is_none());
+        assert_eq!(config::load().hf_token, None);
+
+        if let Some(token) = shell_token {
+            std::env::set_var("HF_TOKEN", token);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn gated_download_failure_names_the_consent_page() {
+        let dir = tempdir();
+        let mut app = test_app(dir.clone());
+        app.library.dir = dir.clone();
+        app.open_hub();
+
+        // A 401 from a gated repo: the info line sends the user to the
+        // consent page (opened in the browser) and the token setting
+        let mut d = fake_download("model.bin", &dir, Arc::new(AtomicBool::new(false)));
+        d.repo = "pyannote/speaker-diarization-community-1".into();
+        app.hub.download = Some(d);
+        app.handle_hub_event(HubEvent::Failed {
+            file: "model.bin".into(),
+            error: "status code 401 for https://huggingface.co/x".into(),
+        });
+        assert!(app.hub.download.is_none());
+        assert!(
+            app.hub
+                .info
+                .contains("hf.co/pyannote/speaker-diarization-community-1"),
+            "{}",
+            app.hub.info
+        );
+        assert!(app.hub.info.contains("HF token"), "{}", app.hub.info);
+
+        // Any other failure keeps the plain error message
+        app.hub.download = Some(fake_download("m2.bin", &dir, Arc::new(AtomicBool::new(false))));
+        app.handle_hub_event(HubEvent::Failed {
+            file: "m2.bin".into(),
+            error: "connection closed early".into(),
+        });
+        assert!(app.hub.info.contains("connection closed early"), "{}", app.hub.info);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn hub_tdrz_row_downloads_or_selects_the_strategy() {
+        use crate::diarize::DiarizeStrategy;
+        let _guard = lock_env(); // Enter and Done persist the strategy
+        let dir = tempdir();
+        std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
+        let mut app = test_app(dir.clone());
+        app.library.dir = dir.clone();
+        app.config.diarize = DiarizeStrategy::Off;
+        app.open_hub();
+
+        // The tdrz offer's "Yes" path selects the row about to download
+        app.hub_select_tdrz_row();
+        let entries = app.hub_default_entries();
+        let row = &entries[app.hub.selected];
+        assert_eq!(row.kind, crate::app::EntryKind::Diarize);
+        assert_eq!(row.file, crate::diarize::TDRZ_FILE);
+        assert!(!row.installed);
+        drop(entries);
+
+        // A finished tdrz download makes TinyDiarize the strategy
+        let path = dir.join(crate::diarize::TDRZ_FILE);
+        std::fs::write(&path, b"weights").unwrap();
+        app.hub.download = Some(fake_download(
+            crate::diarize::TDRZ_FILE,
+            &dir,
+            Arc::new(AtomicBool::new(false)),
+        ));
+        app.handle_hub_event(HubEvent::Done {
+            file: crate::diarize::TDRZ_FILE.into(),
+            path,
+        });
+        assert_eq!(app.config.diarize, DiarizeStrategy::Tdrz);
+        assert!(app.hub.info.contains("TinyDiarize"), "{}", app.hub.info);
+
+        // Installed + active now: Enter re-selects the strategy after a
+        // detour through another one
+        app.config.diarize = DiarizeStrategy::Embedding;
+        app.hub_select_tdrz_row();
+        let entries = app.hub_default_entries();
+        let row = &entries[app.hub.selected];
+        assert!(row.installed && !row.active);
+        drop(entries);
+        app.hub_key(KeyCode::Enter);
+        assert_eq!(app.config.diarize, DiarizeStrategy::Tdrz);
+        assert!(app.hub.download.is_none(), "no download for an installed model");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -632,6 +844,8 @@ mod tests {
             app.status
         );
         assert!(app.status.contains("Model management"), "{}", app.status);
+        // and instead of dead-ending, the download offer opens
+        assert!(app.tdrz_prompt.is_some());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -765,7 +979,7 @@ mod tests {
         app.open_hub();
         assert!(app.hub.open);
         // the curated list is embedded and parsed at startup
-        assert_eq!(app.hub.suggested.len(), 4);
+        assert_eq!(app.hub.suggested.len(), 3);
 
         // typing edits the search bar and arms the debounce (no search yet)
         for c in "whisper".chars() {
@@ -934,15 +1148,15 @@ mod tests {
         let large = entries.iter().find(|e| e.file == "ggml-large-v3.bin").unwrap();
         assert!(large.installed);
         assert_eq!(large.name, "whisper-large-v3");
-        // The two downloaded models precede the three remaining suggestions
-        // (tdrz + the two MLX ones), which are greyed out (not installed).
+        // The two downloaded models precede the two remaining suggestions
+        // (the MLX ones), which are greyed out (not installed).
         assert!(entries[0].installed && entries[1].installed);
         assert_eq!(
             entries
                 .iter()
                 .filter(|e| e.kind == crate::app::EntryKind::Model && !e.installed)
                 .count(),
-            3
+            2
         );
         let first_file = entries[0].file.to_string();
         drop(entries);
@@ -964,8 +1178,9 @@ mod tests {
         app.library.dir = dir.clone();
         app.open_hub();
 
-        // The section header precedes one row per catalog component, and
-        // each role's default is marked active before anything downloads.
+        // The section header precedes the tdrz row plus one row per
+        // catalog component, and each role's default is marked active
+        // before anything downloads.
         let entries = app.hub_default_entries();
         let section = entries
             .iter()
@@ -975,7 +1190,11 @@ mod tests {
             .iter()
             .filter(|e| e.kind == EntryKind::Diarize)
             .collect();
-        assert_eq!(rows.len(), sherpa::CATALOG.len());
+        assert_eq!(rows.len(), sherpa::CATALOG.len() + 1);
+        // The tdrz row heads the section: not installed here, and not
+        // active while the strategy is Off.
+        assert!(rows[0].file == crate::diarize::TDRZ_FILE && !rows[0].installed);
+        assert!(!rows[0].active);
         assert!(rows
             .iter()
             .any(|e| e.file == "pyannote-segmentation-3.onnx" && e.active && !e.installed));

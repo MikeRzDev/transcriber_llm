@@ -7,6 +7,7 @@
 //! [`Requirement`]s so the UI can tell the user exactly what still has
 //! to be downloaded (and how big it is) before the strategy can run.
 
+pub mod pyannote;
 pub mod sherpa;
 
 use std::collections::BTreeMap;
@@ -34,11 +35,20 @@ pub enum DiarizeStrategy {
     /// pyannote segmentation + speaker-embedding clustering via
     /// sherpa-onnx: any model, any engine, any number of speakers
     Embedding,
+    /// pyannote.audio speaker-diarization-community-1 via PyTorch: the
+    /// open-accuracy SOTA — heavier (~2 GB) and gated (HF token)
+    Pyannote,
 }
 
 impl DiarizeStrategy {
     /// Cycle order for the settings row and the `d` shortcut.
-    pub const ALL: [Self; 4] = [Self::Off, Self::Auto, Self::Tdrz, Self::Embedding];
+    pub const ALL: [Self; 5] = [
+        Self::Off,
+        Self::Auto,
+        Self::Tdrz,
+        Self::Embedding,
+        Self::Pyannote,
+    ];
 
     /// Config-file token.
     pub fn key(self) -> &'static str {
@@ -47,6 +57,7 @@ impl DiarizeStrategy {
             Self::Auto => "auto",
             Self::Tdrz => "tdrz",
             Self::Embedding => "embedding",
+            Self::Pyannote => "pyannote",
         }
     }
 
@@ -57,7 +68,8 @@ impl DiarizeStrategy {
             .find(|v| v.key() == s)
             .or(match s.as_str() {
                 "tinydiarize" => Some(Self::Tdrz),
-                "embeddings" | "pyannote" | "sherpa" => Some(Self::Embedding),
+                "embeddings" | "sherpa" => Some(Self::Embedding),
+                "community-1" | "pyannote-community-1" => Some(Self::Pyannote),
                 _ => None,
             })
     }
@@ -69,6 +81,7 @@ impl DiarizeStrategy {
             Self::Auto => "Auto (recommended per model)",
             Self::Tdrz => "TinyDiarize (2 speakers, English, uses the tdrz model)",
             Self::Embedding => "Speaker embeddings (any model, multi-speaker)",
+            Self::Pyannote => "Pyannote community-1 (max quality, PyTorch + HF token)",
         }
     }
 
@@ -97,6 +110,7 @@ impl DiarizeStrategy {
             },
             Self::Tdrz => DiarizeMethod::Tdrz,
             Self::Embedding => DiarizeMethod::Embedding,
+            Self::Pyannote => DiarizeMethod::Pyannote,
         }
     }
 }
@@ -109,6 +123,7 @@ pub enum DiarizeMethod {
     None,
     Tdrz,
     Embedding,
+    Pyannote,
 }
 
 impl DiarizeMethod {
@@ -117,6 +132,7 @@ impl DiarizeMethod {
             Self::None => "none",
             Self::Tdrz => "tinydiarize",
             Self::Embedding => "speaker embeddings",
+            Self::Pyannote => "pyannote community-1",
         }
     }
 
@@ -128,6 +144,7 @@ impl DiarizeMethod {
             Self::Embedding => {
                 Some("pyannote segmentation + speaker-embedding clustering (sherpa-onnx)")
             }
+            Self::Pyannote => Some("pyannote.audio speaker-diarization-community-1"),
         }
     }
 }
@@ -168,6 +185,7 @@ pub fn requirements(
             satisfied: models.iter().any(|m| models::is_tdrz(&m.name)),
         }],
         DiarizeMethod::Embedding => sherpa::requirements(models_dir, choice),
+        DiarizeMethod::Pyannote => pyannote::requirements(),
     }
 }
 
@@ -194,6 +212,7 @@ pub fn download_note(
         DiarizeMethod::Tdrz => {
             format!("needs download: {missing} — Model management (s)")
         }
+        DiarizeMethod::Pyannote => format!("first run sets up: {missing}"),
         _ => format!("first run downloads: {missing}"),
     })
 }
@@ -204,6 +223,27 @@ pub struct SpeakerTurn {
     pub start_ms: i64,
     pub end_ms: i64,
     pub speaker: u8,
+}
+
+/// Every diarizer runner writes the same JSON:
+/// `[{"start": seconds, "end": seconds, "speaker": n}]`.
+pub(crate) fn parse_turns(text: &str) -> anyhow::Result<Vec<SpeakerTurn>> {
+    use anyhow::Context;
+    #[derive(serde::Deserialize)]
+    struct RawTurn {
+        start: f64,
+        end: f64,
+        speaker: u32,
+    }
+    let raw: Vec<RawTurn> = serde_json::from_str(text).context("parsing diarizer JSON output")?;
+    Ok(raw
+        .into_iter()
+        .map(|t| SpeakerTurn {
+            start_ms: (t.start * 1000.0).round() as i64,
+            end_ms: (t.end * 1000.0).round() as i64,
+            speaker: t.speaker.min(u8::MAX as u32) as u8,
+        })
+        .collect())
 }
 
 /// Label each transcript segment with the speaker whose turns overlap it
@@ -282,8 +322,12 @@ mod tests {
             Some(DiarizeStrategy::Tdrz)
         );
         assert_eq!(
-            DiarizeStrategy::parse("pyannote"),
+            DiarizeStrategy::parse("sherpa"),
             Some(DiarizeStrategy::Embedding)
+        );
+        assert_eq!(
+            DiarizeStrategy::parse("community-1"),
+            Some(DiarizeStrategy::Pyannote)
         );
         assert_eq!(DiarizeStrategy::parse("bogus"), None);
     }
@@ -412,6 +456,32 @@ mod tests {
         let turns = [turn(0, 500, 1), turn(500, 1000, 0)];
         let labeled = assign_speakers(&[seg(0, 1000)], &turns);
         assert_eq!(labeled[0].speaker, Some(0));
+    }
+
+    #[test]
+    fn parse_turns_maps_seconds_to_ms() {
+        let turns = parse_turns(
+            r#"[{"start": 0.5, "end": 2.25, "speaker": 0},
+                {"start": 2.25, "end": 4.0, "speaker": 3}]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            turns,
+            vec![
+                SpeakerTurn {
+                    start_ms: 500,
+                    end_ms: 2250,
+                    speaker: 0
+                },
+                SpeakerTurn {
+                    start_ms: 2250,
+                    end_ms: 4000,
+                    speaker: 3
+                },
+            ]
+        );
+        assert!(parse_turns("[]").unwrap().is_empty());
+        assert!(parse_turns("not json").is_err());
     }
 
     #[test]

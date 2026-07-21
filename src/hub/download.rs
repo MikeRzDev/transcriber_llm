@@ -10,6 +10,8 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context;
+
 use super::api::agent;
 use super::{dest_name, variant_dir_name, HubEvent, HubFile};
 
@@ -118,7 +120,8 @@ fn download_blocking(
     tx: &Sender<HubEvent>,
 ) -> anyhow::Result<Outcome> {
     anyhow::ensure!(!save_as.is_empty(), "bad file name");
-    std::fs::create_dir_all(dest_dir)?;
+    std::fs::create_dir_all(dest_dir)
+        .with_context(|| format!("creating {}", dest_dir.display()))?;
     let final_path = dest_dir.join(save_as);
     let url = format!("https://huggingface.co/{repo}/resolve/main/{file}");
     let mut report = |got, total| {
@@ -293,7 +296,7 @@ pub(crate) fn stream_file(
     let mut attempt = 0;
     let resp = loop {
         attempt += 1;
-        let mut req = agent().get(url);
+        let mut req = super::api::authorized(agent().get(url));
         if resume_from > 0 {
             req = req.set("Range", &format!("bytes={resume_from}-"));
         }
@@ -327,11 +330,18 @@ pub(crate) fn stream_file(
     let mut reader = resp.into_reader();
     let (mut out, mut got) = if resuming {
         (
-            std::fs::OpenOptions::new().append(true).open(&part_path)?,
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&part_path)
+                .with_context(|| format!("opening {}", part_path.display()))?,
             resume_from,
         )
     } else {
-        (std::fs::File::create(&part_path)?, 0)
+        (
+            std::fs::File::create(&part_path)
+                .with_context(|| format!("creating {}", part_path.display()))?,
+            0,
+        )
     };
     let mut buf = [0u8; STREAM_BUF_BYTES];
     let mut last_report = got;

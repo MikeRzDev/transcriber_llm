@@ -82,6 +82,33 @@ pub fn is_tdrz(name: &str) -> bool {
     name.contains("tdrz")
 }
 
+/// Why a models folder can't be used right now, if it can't. The classic
+/// case: a configured folder on an external volume that isn't mounted —
+/// creating it would mean writing into root-owned `/Volumes`, so
+/// downloads die with a bare "permission denied" unless this explains it.
+pub fn dir_unavailable(dir: &Path) -> Option<String> {
+    if dir.exists() {
+        return None;
+    }
+    use std::path::Component;
+    let comps: Vec<Component> = dir.components().collect();
+    if let [Component::RootDir, Component::Normal(volumes), Component::Normal(name), ..] =
+        comps[..]
+    {
+        if volumes == "Volumes" {
+            let volume_root = Path::new("/Volumes").join(name);
+            if !volume_root.exists() {
+                return Some(format!(
+                    "the drive '{}' is not mounted — connect it, or change the models \
+                     folder in settings (s)",
+                    name.to_string_lossy()
+                ));
+            }
+        }
+    }
+    None
+}
+
 /// English-only whisper builds are tagged `.en` in the file name.
 pub fn is_english_only(name: &str) -> bool {
     name.contains(".en")
@@ -398,6 +425,23 @@ mod tests {
     #[test]
     fn scan_missing_dir_is_empty() {
         assert!(scan_models(Path::new("/nonexistent/nowhere")).is_empty());
+    }
+
+    #[test]
+    fn dir_unavailable_spots_unmounted_volumes_only() {
+        // a folder on a volume that isn't mounted names the drive
+        let reason =
+            dir_unavailable(Path::new("/Volumes/NoSuchDrive-xyz/models")).expect("unavailable");
+        assert!(reason.contains("NoSuchDrive-xyz"), "{reason}");
+        assert!(reason.contains("not mounted"), "{reason}");
+
+        // an existing folder is fine
+        assert_eq!(dir_unavailable(&std::env::temp_dir()), None);
+        // a missing folder NOT under /Volumes is creatable — no complaint
+        assert_eq!(
+            dir_unavailable(&std::env::temp_dir().join("does-not-exist-yet")),
+            None
+        );
     }
 
     #[test]

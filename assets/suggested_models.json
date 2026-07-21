@@ -10,14 +10,6 @@
       "note": "GGML build of whisper-large-v3 — runs on Metal GPU"
     },
     {
-      "name": "tinydiarize-small.en (tdrz)",
-      "repo": "akashmjn/tinydiarize-whisper.cpp",
-      "file": "ggml-small.en-tdrz.bin",
-      "size": "488 MB",
-      "format": "ggml",
-      "note": "whisper small.en with speaker-turn tokens — the TinyDiarize diarization strategy"
-    },
-    {
       "name": "parakeet-tdt-0.6b-v3",
       "repo": "mlx-community/parakeet-tdt-0.6b-v3",
       "file": "",

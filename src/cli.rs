@@ -21,8 +21,9 @@ pub struct Args {
 
     /// Diarization strategy: off, auto (recommended per model), tdrz
     /// (tinydiarize, 2 speakers, English), embedding (any model,
-    /// multi-speaker). Bare --diarize means auto; pass a strategy as
-    /// --diarize=embedding (the = keeps the audio path unambiguous).
+    /// multi-speaker), pyannote (community-1, needs HF token + PyTorch).
+    /// Bare --diarize means auto; pass a strategy as --diarize=embedding
+    /// (the = keeps the audio path unambiguous).
     #[arg(
         long,
         value_name = "STRATEGY",

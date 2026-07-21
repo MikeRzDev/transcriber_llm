@@ -23,8 +23,20 @@ pub(super) fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(model, Style::default().fg(ACCENT)),
         Span::styled("  •  Metal GPU", Style::default().fg(DIM)),
         if app.config.diarize != crate::diarize::DiarizeStrategy::Off {
+            let speakers = match app.resolved_diarize_method() {
+                // tinydiarize's two-speaker assumption is fixed
+                crate::diarize::DiarizeMethod::Tdrz => "2".into(),
+                _ => app
+                    .config
+                    .diarize_speakers
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "auto".into()),
+            };
             Span::styled(
-                format!("  •  diarize: {}", app.config.diarize.key()),
+                format!(
+                    "  •  diarize: {}, speakers: {speakers}",
+                    app.config.diarize.key()
+                ),
                 Style::default().fg(Color::Magenta),
             )
         } else {

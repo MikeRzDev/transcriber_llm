@@ -70,6 +70,13 @@ fn key_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             ("p", "play sample"),
             ("Esc", "done"),
         ]
+    } else if app.tdrz_prompt.is_some() {
+        vec![
+            ("←→", "choose"),
+            ("Enter", "confirm"),
+            ("y/n", "shortcuts"),
+            ("Esc", "cancel"),
+        ]
     } else if app.hub.open {
         vec![
             ("type", "search"),
@@ -104,7 +111,14 @@ fn key_hints(app: &App) -> Vec<(&'static str, &'static str)> {
         ]
     } else if app.settings.open {
         vec![("↑↓", "select"), ("Enter", "change"), ("Esc", "close")]
+    } else if app.speakers_input.is_some() {
+        vec![
+            ("0-9", "count (empty = auto)"),
+            ("Enter", "save"),
+            ("Esc", "cancel"),
+        ]
     } else {
+        use crate::diarize::{DiarizeMethod, DiarizeStrategy};
         // The cancel key only exists while there is a job to cancel
         let cancellable = app.busy() && app.work != WorkState::UnloadingModel;
         let mut keys: Vec<(&str, &str)> = Vec::new();
@@ -121,9 +135,20 @@ fn key_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             ("m", "models"),
             ("s", "settings"),
             ("d", "diarize"),
-            ("n", "name speakers"),
-            ("q", "quit"),
         ]);
+        // The speaker options only exist while diarization is on: the
+        // count steers the clustering strategies, naming labels any
+        // diarized transcript.
+        if matches!(
+            app.resolved_diarize_method(),
+            DiarizeMethod::Embedding | DiarizeMethod::Pyannote
+        ) {
+            keys.push(("p", "speaker count"));
+        }
+        if app.config.diarize != DiarizeStrategy::Off {
+            keys.push(("n", "name speakers"));
+        }
+        keys.push(("q", "quit"));
         keys
     }
 }

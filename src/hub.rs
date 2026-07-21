@@ -164,6 +164,27 @@ pub enum HubEvent {
     },
 }
 
+/// Open a gated repo's consent page in the default browser so the user
+/// can accept its terms — gated models (pyannote) refuse downloads until
+/// the terms are accepted under the account the token belongs to.
+/// Fire-and-forget: a machine without a browser just ignores it.
+pub fn open_consent_page(repo: &str) {
+    // Tests exercise the gated-failure paths; they must not open pages.
+    if cfg!(test) {
+        return;
+    }
+    let url = format!("https://huggingface.co/{repo}");
+    #[cfg(target_os = "macos")]
+    let launcher = "open";
+    #[cfg(not(target_os = "macos"))]
+    let launcher = "xdg-open";
+    let _ = std::process::Command::new(launcher)
+        .arg(url)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
 /// The Metal backend runs the same GGML files as the CPU backend; this only
 /// decides which capability badge the UI shows.
 pub fn metal_available() -> bool {
@@ -220,15 +241,10 @@ mod tests {
     #[test]
     fn suggested_json_parses_and_supported_entries_are_models() {
         let models = suggested_models();
-        assert_eq!(models.len(), 4);
-        // The tdrz model backing the TinyDiarize strategy is offered here
-        // because its repo is untagged on HF (search can't find it)
-        let tdrz = models
-            .iter()
-            .find(|m| m.file == crate::diarize::TDRZ_FILE)
-            .expect("tdrz suggestion present");
-        assert_eq!(tdrz.repo, crate::diarize::TDRZ_REPO);
-        assert!(crate::models::is_tdrz(&tdrz.file));
+        assert_eq!(models.len(), 3);
+        // The tdrz model is NOT suggested here: it lives in the hub's
+        // diarization section (it backs the TinyDiarize strategy)
+        assert!(models.iter().all(|m| !crate::models::is_tdrz(&m.file)));
         // whisper-large-v3 mapped to its GGML build, as a single file
         let whisper = models
             .iter()

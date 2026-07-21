@@ -5,13 +5,10 @@ use ratatui::Frame;
 
 use crate::app::{App, SettingsRow};
 use crate::export::ExportFormat;
-use crate::ui::layout::centered_rect;
+use crate::ui::layout::{centered_rect, centered_rect_rows};
 use crate::ui::theme::{highlight_style, ACCENT, DIM};
 
 pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
-    let area = centered_rect(70, 55, frame.area());
-    frame.render_widget(Clear, area);
-
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ACCENT))
@@ -26,7 +23,7 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
 
     let row_style = |row: SettingsRow| {
         let editing =
-            app.settings.language_input.is_some() || app.settings.speakers_input.is_some();
+            app.settings.language_input.is_some() || app.settings.hf_token_input.is_some();
         if app.settings.selected == row && !editing {
             highlight_style()
         } else {
@@ -49,9 +46,11 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
         }
     };
 
-    let speakers_line: Line = if let Some(input) = &app.settings.speakers_input {
+    // The token is a credential: show only enough of it to recognize
+    // which one is stored, never the whole value.
+    let hf_token_line: Line = if let Some(input) = &app.settings.hf_token_input {
         Line::from(vec![
-            Span::raw("  Speakers:       "),
+            Span::raw("  HF token:       "),
             Span::styled(
                 format!("{input}▏"),
                 Style::default()
@@ -62,13 +61,13 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
     } else {
         Line::from(Span::styled(
             format!(
-                "  Speakers:       {}",
-                match app.config.diarize_speakers {
-                    Some(n) => format!("exactly {n}"),
-                    None => "auto-detect".into(),
+                "  HF token:       {}",
+                match &app.config.hf_token {
+                    Some(token) => masked_token(token),
+                    None => "not set (needed for gated models, e.g. pyannote)".into(),
                 }
             ),
-            row_style(SettingsRow::DiarizeSpeakers),
+            row_style(SettingsRow::HfToken),
         ))
     };
 
@@ -132,8 +131,6 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
             row_style(SettingsRow::Diarize),
         )),
         Line::raw(""),
-        speakers_line,
-        Line::raw(""),
         Line::from(Span::styled(
             format!("  Split mode:     {}", app.config.split_mode.label()),
             row_style(SettingsRow::SplitMode),
@@ -141,11 +138,13 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
         Line::raw(""),
         language_line,
         Line::raw(""),
+        hf_token_line,
+        Line::raw(""),
         Line::from(Span::styled(
             if app.settings.language_input.is_some() {
                 "  Type an ISO 639-1 code (en, es, de, fr…) or auto, Enter to save"
-            } else if app.settings.speakers_input.is_some() {
-                "  Known speaker count (1–26) pins the clustering; empty = auto-detect"
+            } else if app.settings.hf_token_input.is_some() {
+                "  Paste your hf.co token (Enter saves, empty clears) — used for gated models"
             } else {
                 "  ↑↓ select · Enter change · Esc close  (saved to ~/.config/transcribe-stt)"
             },
@@ -153,7 +152,31 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
         )),
     ];
 
+    // Size the modal to its content: a fixed percentage height used to
+    // clip the bottom rows (diarization, speakers, language) invisibly
+    // on short terminals. If even the full content cannot fit, drop the
+    // blank separator rows first — every setting stays reachable.
+    let mut lines = lines;
+    if lines.len() as u16 + 2 > frame.area().height {
+        lines.retain(|l| l.width() != 0);
+    }
+    let area = centered_rect_rows(70, lines.len() as u16 + 2, frame.area());
+    frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// A stored token shown as `hf_…wxyz`: enough to recognize which token
+/// is set without ever rendering the credential itself.
+fn masked_token(token: &str) -> String {
+    let tail: String = token
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("set (…{tail})")
 }
 
 /// Checkbox dialog over the settings modal: which formats every

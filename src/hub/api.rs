@@ -22,6 +22,24 @@ pub(super) fn agent() -> ureq::Agent {
         .build()
 }
 
+/// The Hugging Face token, if any: `config::apply_hf_token` exports the
+/// configured one into `HF_TOKEN`, and a shell-provided variable works
+/// the same. Gated repos (pyannote) refuse unauthenticated downloads.
+pub(super) fn hf_token() -> Option<String> {
+    ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"]
+        .iter()
+        .find_map(|var| std::env::var(var).ok())
+        .filter(|token| !token.trim().is_empty())
+}
+
+/// Attach the HF bearer token to a request when one is available.
+pub(super) fn authorized(req: ureq::Request) -> ureq::Request {
+    match hf_token() {
+        Some(token) => req.set("Authorization", &format!("Bearer {}", token.trim())),
+        None => req,
+    }
+}
+
 /// Search the Hub for repos matching `query`, most-downloaded first,
 /// restricted to the speech-to-text (automatic-speech-recognition)
 /// category. Untagged conversion repos won't appear. The receiver should
@@ -33,7 +51,7 @@ pub fn search(query: String, tx: Sender<HubEvent>) {
             urlencode(&query)
         );
         let result = (|| -> anyhow::Result<Vec<RepoHit>> {
-            let resp = agent().get(&url).call()?;
+            let resp = authorized(agent().get(&url)).call()?;
             let v: serde_json::Value = serde_json::from_reader(resp.into_reader())?;
             Ok(parse_search(&v))
         })();
@@ -146,7 +164,7 @@ pub(super) fn fetch_repo_files(repo: &str) -> anyhow::Result<Vec<HubFile>> {
 
 fn fetch_repo_json(repo: &str) -> anyhow::Result<serde_json::Value> {
     let url = format!("https://huggingface.co/api/models/{repo}?blobs=true");
-    let resp = agent().get(&url).call()?;
+    let resp = authorized(agent().get(&url)).call()?;
     Ok(serde_json::from_reader(resp.into_reader())?)
 }
 

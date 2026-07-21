@@ -37,6 +37,20 @@ pub fn areas(area: Rect, key_rows: u16) -> Areas {
     }
 }
 
+/// Centered rect sized to an exact number of rows (clamped to `r`) with
+/// a percentage width — for modals that must show all their content
+/// instead of clipping it at a fixed percentage height.
+pub fn centered_rect_rows(percent_x: u16, rows: u16, r: Rect) -> Rect {
+    let height = rows.min(r.height);
+    let width = (r.width * percent_x / 100).min(r.width);
+    Rect {
+        x: r.x + (r.width - width) / 2,
+        y: r.y + (r.height - height) / 2,
+        width,
+        height,
+    }
+}
+
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let vertical = Layout::default()
         .direction(Direction::Vertical)

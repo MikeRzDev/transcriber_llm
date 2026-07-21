@@ -11,7 +11,9 @@ use crossterm::event::KeyCode;
 use crate::app::App;
 use crate::config;
 use crate::diarize::sherpa::{self, DiarizeRole};
+use crate::diarize::{self, DiarizeMethod, DiarizeStrategy};
 use crate::hub::{self, DirVariant, HubEvent, HubFile, RepoHit, SuggestedModel};
+use crate::models;
 
 /// One repo's downloadables: directory-model variants first, then its
 /// single GGML/GGUF files. Rows are indexed across both lists.
@@ -160,6 +162,11 @@ impl App {
         self.hub.open = true;
         self.hub.selected = 0;
         self.hub.info.clear();
+        // An unusable models folder explains itself immediately instead
+        // of failing the first download with a bare OS error
+        if let Some(reason) = crate::models::dir_unavailable(&self.library.dir) {
+            self.hub.info = format!("Models folder unavailable: {reason}");
+        }
     }
 
     /// Priority order: a repo's file view, then search results, then the
@@ -213,10 +220,12 @@ impl App {
                 installed: false,
             });
         }
-        // The diarization category: the embedding pipeline's components
-        // (usable with any transcription model), stored under
-        // <models>/diarization. Enter downloads a missing one or makes an
-        // installed one its role's active choice.
+        // The diarization category: the tdrz whisper build (the
+        // TinyDiarize strategy) and the embedding pipeline's components
+        // (usable with any transcription model, stored under
+        // <models>/diarization). Enter downloads a missing one or makes
+        // an installed one active — the tdrz row selects its strategy,
+        // the others become their role's choice.
         entries.push(DefaultEntry {
             kind: EntryKind::Section,
             active: false,
@@ -229,6 +238,19 @@ impl App {
             is_dir: false,
             supported: true,
             installed: false,
+        });
+        entries.push(DefaultEntry {
+            kind: EntryKind::Diarize,
+            active: self.resolved_diarize_method() == DiarizeMethod::Tdrz,
+            name: "tinydiarize (tdrz)",
+            file: diarize::TDRZ_FILE.to_string(),
+            repo: Some(diarize::TDRZ_REPO),
+            size: diarize::TDRZ_SIZE.to_string(),
+            note: "whisper small.en with speaker-turn tokens · English · 2 speakers",
+            format: "strategy",
+            is_dir: false,
+            supported: true,
+            installed: self.library.models.iter().any(|m| models::is_tdrz(&m.name)),
         });
         for m in &sherpa::CATALOG {
             let configured = match m.role {
@@ -391,7 +413,20 @@ impl App {
         match kind {
             EntryKind::Section => {}
             EntryKind::Diarize => {
-                if installed {
+                // The tdrz row is a whole strategy, not a pipeline role:
+                // its model lives in the models folder root (the whisper
+                // engine transcribes with it) and Enter selects the
+                // TinyDiarize strategy once it is installed.
+                if file == diarize::TDRZ_FILE {
+                    if installed {
+                        self.config.diarize = DiarizeStrategy::Tdrz;
+                        let _ = config::save(&self.config);
+                        self.hub.info =
+                            "Diarization strategy set to TinyDiarize (2 speakers, English)".into();
+                    } else if let Some(repo) = repo {
+                        self.hub_start_download(repo, file);
+                    }
+                } else if installed {
                     self.set_active_diarize_model(&file);
                 } else if let Some(repo) = repo {
                     self.hub_start_diarize_download(repo, file);
@@ -422,6 +457,25 @@ impl App {
         }
     }
 
+    /// Move the hub selection onto the tdrz row of the diarization
+    /// section (leaving any search or file view — the row lives in the
+    /// default view). Used by the tdrz download offer so the transfer it
+    /// starts is in view.
+    pub(crate) fn hub_select_tdrz_row(&mut self) {
+        self.hub.files = None;
+        self.hub.results = None;
+        self.hub.input.clear();
+        self.hub.searching = false;
+        self.hub.last_edit = None;
+        if let Some(index) = self
+            .hub_default_entries()
+            .iter()
+            .position(|e| e.kind == EntryKind::Diarize && e.file == diarize::TDRZ_FILE)
+        {
+            self.hub.selected = index;
+        }
+    }
+
     /// Make an installed diarization component the one its role uses,
     /// and persist the choice.
     fn set_active_diarize_model(&mut self, local: &str) {
@@ -444,9 +498,25 @@ impl App {
         );
     }
 
+    /// A download can only land in a folder that exists (or can exist):
+    /// a models folder on an unmounted external drive fails with a bare
+    /// "permission denied" unless caught here with the real reason.
+    fn hub_dest_unavailable(&mut self) -> bool {
+        match crate::models::dir_unavailable(&self.library.dir) {
+            Some(reason) => {
+                self.hub.info = format!("Cannot download: {reason}");
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Download a diarization component into `<models>/diarization`
     /// under its catalog name.
     fn hub_start_diarize_download(&mut self, repo: String, local: String) {
+        if self.hub_dest_unavailable() {
+            return;
+        }
         let Some(model) = sherpa::CATALOG.iter().find(|m| m.local == local) else {
             return;
         };
@@ -481,7 +551,10 @@ impl App {
         );
     }
 
-    fn hub_start_download(&mut self, repo: String, file: String) {
+    pub(crate) fn hub_start_download(&mut self, repo: String, file: String) {
+        if self.hub_dest_unavailable() {
+            return;
+        }
         let Some(base) = hub::dest_name(&file) else {
             self.hub.info = "Bad file name".into();
             return;
@@ -515,6 +588,9 @@ impl App {
     /// is absent from the scan, so it arrives back here and only its
     /// missing files are fetched.
     fn hub_start_dir_download(&mut self, repo: String, subdir: String) {
+        if self.hub_dest_unavailable() {
+            return;
+        }
         let name = hub::variant_dir_name(&repo, &subdir);
         if self.library.models.iter().any(|m| m.name == name) {
             self.hub.info = format!("{name} is already in the models folder");
@@ -632,7 +708,9 @@ impl App {
             self.hub.info = format!("{name} isn't downloaded — nothing to delete");
             return;
         }
-        if kind == EntryKind::Diarize {
+        // The tdrz build lives in the models folder root like any model;
+        // only the pipeline components live under <models>/diarization.
+        if kind == EntryKind::Diarize && file != diarize::TDRZ_FILE {
             let path = sherpa::dir(&self.library.dir).join(&file);
             let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             self.hub.delete_prompt = Some(DeletePrompt {
@@ -789,8 +867,20 @@ impl App {
                         format!("Downloaded {file} ✓ — now the active {}", model.role.label());
                     self.status = self.hub.info.clone();
                 } else {
-                    self.hub.info = format!("Downloaded {file} ✓");
-                    self.status = format!("Downloaded {file} to {}", self.library.dir.display());
+                    if models::is_tdrz(&file) {
+                        // Same rule as the pipeline components: the tdrz
+                        // build was downloaded to be used, so TinyDiarize
+                        // becomes the active strategy.
+                        self.config.diarize = DiarizeStrategy::Tdrz;
+                        let _ = config::save(&self.config);
+                        self.hub.info =
+                            format!("Downloaded {file} ✓ — TinyDiarize is now the strategy");
+                        self.status = self.hub.info.clone();
+                    } else {
+                        self.hub.info = format!("Downloaded {file} ✓");
+                        self.status =
+                            format!("Downloaded {file} to {}", self.library.dir.display());
+                    }
                     if self.library.selected.is_none() {
                         self.library.selected =
                             self.library.models.iter().find(|m| m.path == path).cloned();
@@ -802,8 +892,29 @@ impl App {
                 self.hub.info = format!("Cancelled {file}");
             }
             HubEvent::Failed { file, error } => {
+                // A 401/403 means the repo is gated (or the token is bad):
+                // open the consent page so the user can accept the terms,
+                // and point at the settings row that stores a token.
+                let gated_repo = self
+                    .hub
+                    .download
+                    .as_ref()
+                    .filter(|d| d.file == file)
+                    .filter(|_| {
+                        error.contains("status code 401") || error.contains("status code 403")
+                    })
+                    .map(|d| d.repo.clone());
                 self.hub.download = None;
-                self.hub.info = format!("Download of {file} failed: {error}");
+                if let Some(repo) = gated_repo {
+                    hub::open_consent_page(&repo);
+                    self.hub.info = format!(
+                        "Download of {file} failed: access denied — accept the terms at \
+                         hf.co/{repo} (opened in your browser), set your token in s → HF \
+                         token, then retry"
+                    );
+                } else {
+                    self.hub.info = format!("Download of {file} failed: {error}");
+                }
             }
             HubEvent::ModelsMoved {
                 moved,
