@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::format::{llm_time, srt_time};
 use crate::transcribe::Segment;
 
 /// Everything needed to render a transcript in any output format.
@@ -220,34 +221,6 @@ pub fn paragraphs(segments: &[Segment]) -> Vec<Paragraph> {
     paras
 }
 
-pub fn srt_time(ms: i64) -> String {
-    let h = ms / 3_600_000;
-    let m = (ms % 3_600_000) / 60_000;
-    let s = (ms % 60_000) / 1000;
-    let millis = ms % 1000;
-    format!("{h:02}:{m:02}:{s:02},{millis:03}")
-}
-
-/// Always HH:MM:SS so anchors are uniform for machine parsing.
-pub fn llm_time(ms: i64) -> String {
-    let h = ms / 3_600_000;
-    let m = (ms % 3_600_000) / 60_000;
-    let s = (ms % 60_000) / 1000;
-    format!("{h:02}:{m:02}:{s:02}")
-}
-
-/// Compact form for the transcript pane.
-pub fn clock_time(ms: i64) -> String {
-    let h = ms / 3_600_000;
-    let m = (ms % 3_600_000) / 60_000;
-    let s = (ms % 60_000) / 1000;
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m:02}:{s:02}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,15 +239,6 @@ mod tests {
             speaker: Some(speaker),
             ..seg(start_ms, end_ms, text)
         }
-    }
-
-    #[test]
-    fn time_formats() {
-        assert_eq!(srt_time(0), "00:00:00,000");
-        assert_eq!(srt_time(3_723_456), "01:02:03,456");
-        assert_eq!(llm_time(3_723_456), "01:02:03");
-        assert_eq!(clock_time(59_000), "00:59");
-        assert_eq!(clock_time(3_600_000), "1:00:00");
     }
 
     #[test]

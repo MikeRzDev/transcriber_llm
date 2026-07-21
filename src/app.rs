@@ -262,14 +262,7 @@ impl App {
                 path: p,
             })
             .or_else(|| {
-                // Configured default first, then large-v3, then whatever exists
-                app_config
-                    .default_model
-                    .as_ref()
-                    .and_then(|name| models_list.iter().find(|m| &m.name == name))
-                    .or_else(|| models_list.iter().find(|m| m.name.contains("large-v3")))
-                    .or_else(|| models_list.first())
-                    .cloned()
+                models::pick_default(&models_list, app_config.default_model.as_deref()).cloned()
             });
 
         let diarize = app_config.diarize;
@@ -397,7 +390,7 @@ impl App {
     pub fn find_tdrz_model(&self) -> Option<ModelFile> {
         self.models
             .iter()
-            .find(|m| m.name.contains("tdrz"))
+            .find(|m| models::is_tdrz(&m.name))
             .cloned()
     }
 
@@ -467,14 +460,8 @@ impl App {
             .map(|m| !m.path.exists())
             .unwrap_or(true);
         if selection_gone {
-            self.selected_model = self
-                .config
-                .default_model
-                .as_ref()
-                .and_then(|name| self.models.iter().find(|m| &m.name == name))
-                .or_else(|| self.models.iter().find(|m| m.name.contains("large-v3")))
-                .or_else(|| self.models.first())
-                .cloned();
+            self.selected_model =
+                models::pick_default(&self.models, self.config.default_model.as_deref()).cloned();
         }
     }
 

@@ -9,19 +9,27 @@ pub struct ModelFile {
 
 impl ModelFile {
     pub fn size_human(&self) -> String {
-        human_size(self.size_bytes)
+        crate::format::human_size(self.size_bytes)
     }
 }
 
-pub fn human_size(bytes: u64) -> String {
-    let b = bytes as f64;
-    if b >= 1e9 {
-        format!("{:.1} GB", b / 1e9)
-    } else if b >= 1e6 {
-        format!("{:.0} MB", b / 1e6)
-    } else {
-        format!("{:.0} KB", b / 1e3)
-    }
+/// tinydiarize builds carry speaker-turn tokens and are named `*-tdrz*`.
+pub fn is_tdrz(name: &str) -> bool {
+    name.contains("tdrz")
+}
+
+/// English-only whisper builds are tagged `.en` in the file name.
+pub fn is_english_only(name: &str) -> bool {
+    name.contains(".en")
+}
+
+/// The model a job should use when none is explicitly selected: the
+/// configured default first, then large-v3, then whatever exists.
+pub fn pick_default<'a>(models: &'a [ModelFile], configured: Option<&str>) -> Option<&'a ModelFile> {
+    configured
+        .and_then(|name| models.iter().find(|m| m.name == name))
+        .or_else(|| models.iter().find(|m| m.name.contains("large-v3")))
+        .or_else(|| models.first())
 }
 
 /// whisper.cpp ships GGML-format .bin models; .gguf covers other

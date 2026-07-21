@@ -56,11 +56,7 @@ impl ProcStats {
 }
 
 fn format_stats(mem_bytes: u64, cpu_percent: f32, core_count: usize) -> String {
-    let mem = if mem_bytes >= 1_000_000_000 {
-        format!("{:.1} GB", mem_bytes as f64 / 1e9)
-    } else {
-        format!("{:.0} MB", mem_bytes as f64 / 1e6)
-    };
+    let mem = crate::format::human_size(mem_bytes);
     let machine_pct = (cpu_percent / core_count.max(1) as f32).clamp(0.0, 100.0);
     format!("RAM {mem} · CPU {machine_pct:.0}%")
 }

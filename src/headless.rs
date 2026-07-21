@@ -8,6 +8,7 @@ use std::sync::mpsc::channel;
 use anyhow::{bail, Result};
 
 use crate::cli::Args;
+use crate::format::{clock_time, human_size};
 use crate::transcribe::{Event, Job};
 use crate::{config, export, hub, models, split, transcribe};
 
@@ -17,15 +18,10 @@ fn default_model(diarize: bool) -> Option<PathBuf> {
     if diarize {
         return found
             .iter()
-            .find(|m| m.name.contains("tdrz"))
+            .find(|m| models::is_tdrz(&m.name))
             .map(|m| m.path.clone());
     }
-    cfg.default_model
-        .as_ref()
-        .and_then(|name| found.iter().find(|m| &m.name == name))
-        .or_else(|| found.iter().find(|m| m.name.contains("large-v3")))
-        .or_else(|| found.first())
-        .map(|m| m.path.clone())
+    models::pick_default(&found, cfg.default_model.as_deref()).map(|m| m.path.clone())
 }
 
 pub fn run(args: &Args) -> Result<()> {
@@ -81,8 +77,8 @@ pub fn download_test_model() -> Result<()> {
                     eprint!(
                         "\r{:>3}%  {} / {}   ",
                         got * 100 / total,
-                        models::human_size(got),
-                        models::human_size(total)
+                        human_size(got),
+                        human_size(total)
                     );
                 }
             }
@@ -137,8 +133,8 @@ fn run_headless_loop(rx: std::sync::mpsc::Receiver<Event>) -> Result<()> {
             Event::Segment(seg) => {
                 println!(
                     "[{} → {}] {}",
-                    export::clock_time(seg.start_ms),
-                    export::clock_time(seg.end_ms),
+                    clock_time(seg.start_ms),
+                    clock_time(seg.end_ms),
                     seg.text.trim()
                 );
             }
@@ -151,8 +147,8 @@ fn run_headless_loop(rx: std::sync::mpsc::Receiver<Event>) -> Result<()> {
                         .unwrap_or_default();
                     println!(
                         "[{} → {}] {}{}",
-                        export::clock_time(seg.start_ms),
-                        export::clock_time(seg.end_ms),
+                        clock_time(seg.start_ms),
+                        clock_time(seg.end_ms),
                         speaker,
                         seg.text.trim()
                     );

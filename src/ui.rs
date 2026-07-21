@@ -5,9 +5,8 @@ use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, 
 use ratatui::Frame;
 
 use crate::app::{App, DirRow, FileEntry, Focus, WorkState};
-use crate::export::clock_time;
+use crate::format::{clock_time, fmt_count, human_size};
 use crate::hub;
-use crate::models::human_size;
 
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
@@ -389,16 +388,6 @@ fn draw_hub(frame: &mut Frame, app: &App) {
             Paragraph::new(format!(" {}", app.hub.info)).style(style),
             rows[4],
         );
-    }
-}
-
-fn fmt_count(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1e6)
-    } else if n >= 1_000 {
-        format!("{:.1}k", n as f64 / 1e3)
-    } else {
-        n.to_string()
     }
 }
 

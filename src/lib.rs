@@ -7,6 +7,7 @@ pub mod audio;
 pub mod cli;
 pub mod config;
 pub mod export;
+pub mod format;
 pub mod headless;
 pub mod hub;
 pub mod models;

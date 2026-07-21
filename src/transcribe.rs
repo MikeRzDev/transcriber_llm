@@ -250,12 +250,12 @@ fn run_job(
     let mut state = ctx.create_state()?;
 
     // Diarization is opt-in and only tdrz models emit turn markers
-    let diarize = job.diarize && model_name.contains("tdrz");
+    let diarize = job.diarize && crate::models::is_tdrz(&model_name);
 
     // Priority: English-only models are always "en" (they have no
     // multilingual tokens and auto-detection returns garbage), then the
     // user-configured language, then auto-detection.
-    let language: &str = if model_name.contains(".en") {
+    let language: &str = if crate::models::is_english_only(&model_name) {
         "en"
     } else {
         job.language.as_deref().unwrap_or("auto")
