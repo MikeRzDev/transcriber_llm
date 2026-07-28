@@ -82,15 +82,23 @@ impl TranscriptDoc<'_> {
             .unwrap_or_else(|| speaker_label(speaker))
     }
 
-    /// Write the selected formats into `<out_base>/<source-stem>_<timestamp>/`.
-    /// Returns the paths written.
+    /// Write the selected formats into
+    /// `<out_base>/<source-stem>_<model-tag>_<timestamp>/` (the model
+    /// tag is dropped when no model name is known). Returns the paths
+    /// written.
     pub fn write(&self, out_base: &Path, formats: &[ExportFormat]) -> Result<Vec<PathBuf>> {
         anyhow::ensure!(!formats.is_empty(), "no export formats selected");
         let stem = Path::new(&self.source_name)
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "transcript".into());
-        let dir = out_base.join(format!("{stem}_{}", crate::format::file_timestamp()));
+        let tag = self
+            .model_name
+            .map(crate::models::file_tag)
+            .filter(|t| !t.is_empty())
+            .map(|t| format!("{t}_"))
+            .unwrap_or_default();
+        let dir = out_base.join(format!("{stem}_{tag}{}", crate::format::file_timestamp()));
         std::fs::create_dir_all(&dir)?;
         let mut written = Vec::with_capacity(formats.len());
         for format in formats {
@@ -165,8 +173,15 @@ impl TranscriptDoc<'_> {
             "language: {}\n",
             self.language.unwrap_or("unknown")
         ));
+        // Single-file ggml/gguf models run on whisper.cpp; directory
+        // models (bare names) run on the MLX engine.
+        let engine = match self.model_name {
+            Some(n) if n.ends_with(".bin") || n.ends_with(".gguf") => "whisper.cpp, local",
+            Some(_) => "mlx-audio, local",
+            None => "local",
+        };
         out.push_str(&format!(
-            "model: {} (whisper.cpp, local)\n",
+            "model: {} ({engine})\n",
             self.model_name.unwrap_or("unknown")
         ));
         out.push_str(&format!("segments: {}\n", self.segments.len()));
@@ -432,7 +447,7 @@ mod tests {
         assert_eq!(out_dir.parent().unwrap(), dir);
         let folder = out_dir.file_name().unwrap().to_string_lossy();
         assert!(
-            folder.starts_with("clip_") && folder.len() == "clip_YYYYMMDD_HHMMSS".len(),
+            folder.starts_with("clip_m_") && folder.len() == "clip_m_YYYYMMDD_HHMMSS".len(),
             "unexpected folder name: {folder}"
         );
         for ext in ["llm.md", "segments.json", "txt", "srt"] {

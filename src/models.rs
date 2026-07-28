@@ -152,6 +152,28 @@ pub fn display_name(name: &str) -> String {
     }
 }
 
+/// Short filesystem-safe model tag for output folder names:
+/// `ggml-large-v3.bin` → `large-v3`, `Qwen3-ASR-1.7B-8bit` →
+/// `qwen3-asr-1.7b-8bit`. Lowercased; anything outside [a-z0-9._-]
+/// becomes `-`.
+pub fn file_tag(name: &str) -> String {
+    let base = name.strip_prefix("ggml-").unwrap_or(name);
+    let base = base
+        .strip_suffix(".bin")
+        .or_else(|| base.strip_suffix(".gguf"))
+        .unwrap_or(base);
+    base.to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
 /// tinydiarize builds carry speaker-turn tokens and are named `*-tdrz*`.
 pub fn is_tdrz(name: &str) -> bool {
     name.contains("tdrz")
@@ -553,6 +575,15 @@ mod tests {
         assert_eq!(display_name("voice-model.gguf"), "voice-model.gguf");
         assert_eq!(display_name("parakeet-tdt-0.6b-v3"), "parakeet-tdt-0.6b-v3");
         assert_eq!(display_name("ggml-.bin"), "ggml-.bin");
+    }
+
+    #[test]
+    fn file_tag_shortens_and_sanitizes() {
+        assert_eq!(file_tag("ggml-large-v3.bin"), "large-v3");
+        assert_eq!(file_tag("ggml-small.en-tdrz.bin"), "small.en-tdrz");
+        assert_eq!(file_tag("Qwen3-ASR-1.7B-8bit"), "qwen3-asr-1.7b-8bit");
+        assert_eq!(file_tag("parakeet-tdt-0.6b-v3"), "parakeet-tdt-0.6b-v3");
+        assert_eq!(file_tag("weird name?.gguf"), "weird-name-");
     }
 
     #[test]
