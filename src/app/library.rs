@@ -23,12 +23,25 @@ pub struct ModelLibrary {
 pub struct ModelPicker {
     pub open: bool,
     pub selected: usize,
+    /// Compatibility is checked when opening, never during rendering.
+    pub live_notes: std::collections::BTreeMap<PathBuf, Option<String>>,
 }
 
 impl App {
     /// Open the model picker preselected on the current default.
     pub fn open_model_picker(&mut self) {
         self.refresh_models();
+        self.picker.live_notes = self
+            .library
+            .models
+            .iter()
+            .map(|m| {
+                (
+                    m.path.clone(),
+                    crate::transcribe::realtime::unavailable_reason(&m.path),
+                )
+            })
+            .collect();
         self.picker.selected = self
             .library
             .selected
@@ -46,11 +59,9 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.picker.selected = self.picker.selected.saturating_sub(1);
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if !self.library.models.is_empty() {
-                    self.picker.selected =
-                        (self.picker.selected + 1).min(self.library.models.len() - 1);
-                }
+            KeyCode::Down | KeyCode::Char('j') if !self.library.models.is_empty() => {
+                self.picker.selected =
+                    (self.picker.selected + 1).min(self.library.models.len() - 1);
             }
             KeyCode::Enter => {
                 if let Some(model) = self.library.models.get(self.picker.selected).cloned() {

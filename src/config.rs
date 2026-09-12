@@ -6,6 +6,25 @@ use crate::diarize::{DiarizeModelChoice, DiarizeStrategy};
 use crate::export::ExportFormat;
 use crate::split::SplitMode;
 
+/// Common input languages offered in Settings; other codes remain available via `i`/CLI.
+pub const INPUT_LANGUAGES: [(&str, &str); 6] = [
+    ("auto", "Auto"),
+    ("en", "English"),
+    ("es", "Spanish"),
+    ("de", "German"),
+    ("it", "Italian"),
+    ("fr", "French"),
+];
+
+pub fn language_label(code: Option<&str>) -> &str {
+    let code = code.unwrap_or("auto");
+    INPUT_LANGUAGES
+        .iter()
+        .find(|(c, _)| *c == code)
+        .map(|(_, label)| *label)
+        .unwrap_or(code)
+}
+
 /// Persisted settings, stored as simple `key = value` lines in
 /// ~/.config/transcribe-stt/config.toml
 #[derive(Clone, Debug, PartialEq)]
@@ -22,7 +41,7 @@ pub struct Config {
     /// Fixing the count when it is known constrains the clustering and
     /// noticeably improves label quality.
     pub diarize_speakers: Option<u8>,
-    /// ISO 639-1 code passed to whisper; None = auto-detect
+    /// Input language for all transcription backends that support it; None = auto-detect.
     pub language: Option<String>,
     /// Hugging Face access token for gated models (pyannote community-1)
     /// and authenticated hub downloads; None = rely on the environment /
@@ -70,7 +89,11 @@ pub fn apply_hf_token(config: &Config) {
 fn parse_formats(value: &str) -> Vec<ExportFormat> {
     let formats: Vec<ExportFormat> = ExportFormat::ALL
         .into_iter()
-        .filter(|f| value.split(',').any(|tok| ExportFormat::parse(tok) == Some(*f)))
+        .filter(|f| {
+            value
+                .split(',')
+                .any(|tok| ExportFormat::parse(tok) == Some(*f))
+        })
         .collect();
     if formats.is_empty() {
         ExportFormat::ALL.to_vec()
@@ -247,9 +270,7 @@ fn parse_lenient(contents: &str) -> Config {
                     config.diarize = strategy;
                 }
             }
-            "diarize_segmentation" => {
-                config.diarize_models.segmentation = Some(value.to_string())
-            }
+            "diarize_segmentation" => config.diarize_models.segmentation = Some(value.to_string()),
             "diarize_embedding" => config.diarize_models.embedding = Some(value.to_string()),
             "diarize_speakers" => {
                 config.diarize_speakers = value.parse::<u8>().ok().filter(|n| *n > 0)
@@ -332,10 +353,7 @@ mod tests {
     #[test]
     fn legacy_diarize_bool_maps_to_the_tdrz_strategy() {
         // pre-strategy configs held a bool; true meant tinydiarize
-        assert_eq!(
-            parse_str("diarize = true").diarize,
-            DiarizeStrategy::Tdrz
-        );
+        assert_eq!(parse_str("diarize = true").diarize, DiarizeStrategy::Tdrz);
         assert_eq!(parse_str("diarize = false").diarize, DiarizeStrategy::Off);
         // the new key wins over the legacy one
         assert_eq!(

@@ -2,6 +2,7 @@
 //! modal is open; every widget lives in its own submodule and reads the
 //! `App` state without mutating it.
 
+mod audio_input;
 mod dir_picker;
 mod files;
 mod header;
@@ -12,6 +13,7 @@ mod log;
 mod model_picker;
 mod move_prompt;
 mod naming;
+mod realtime;
 mod settings;
 mod speakers;
 mod start_prompt;
@@ -32,7 +34,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let areas = layout::areas(frame.area(), key_rows);
 
     header::draw_header(frame, areas.header, app);
-    files::draw_files(frame, areas.files, app);
+    if app.live.visible {
+        realtime::draw_recording(frame, areas.files, app);
+    } else {
+        files::draw_files(frame, areas.files, app);
+    }
     if app.show_log {
         log::draw_log(frame, areas.transcript, app);
     } else {
@@ -45,6 +51,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
         settings::draw_settings(frame, app);
         if app.settings.formats_cursor.is_some() {
             settings::draw_export_formats(frame, app);
+        }
+        if app.settings.language_cursor.is_some() {
+            settings::draw_input_languages(frame, app);
         }
     }
     if app.picker.open {
@@ -73,6 +82,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
     if app.tdrz_prompt.is_some() {
         tdrz_prompt::draw_tdrz_prompt(frame, app);
+    }
+    if app.audio_input.open {
+        audio_input::draw_audio_inputs(frame, app);
     }
     // Topmost: it can open over any other modal (e.g. a file dropped
     // while the hub is up) and its keys take priority

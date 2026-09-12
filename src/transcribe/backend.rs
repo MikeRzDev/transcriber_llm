@@ -8,6 +8,7 @@
 mod mlx;
 mod whisper_metal;
 
+pub(crate) use mlx::live_python;
 pub use mlx::mlx_audio_available;
 
 use std::path::Path;

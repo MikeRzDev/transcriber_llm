@@ -5,6 +5,7 @@
 //! directory (safetensors) models by shelling out to mlx-audio.
 
 mod backend;
+pub mod realtime;
 mod worker;
 
 pub use backend::mlx_audio_available;
@@ -14,6 +15,23 @@ use std::path::PathBuf;
 
 use crate::diarize::{DiarizeMethod, DiarizeModelChoice};
 use crate::split::SplitMode;
+
+/// Adapt the shared ISO code to MLX families that expect language names.
+/// Qwen inserts this value literally into its decoder's language prefix.
+pub(crate) fn mlx_language(model: &std::path::Path, language: Option<&str>) -> Option<String> {
+    let code = language?.trim().to_ascii_lowercase();
+    if code.is_empty() || code == "auto" {
+        return None;
+    }
+    let config = std::fs::read(model.join("config.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+    if config.as_ref().and_then(|c| c["model_type"].as_str()) == Some("qwen3_asr") {
+        Some(crate::config::language_label(Some(&code)).to_string())
+    } else {
+        Some(code)
+    }
+}
 
 pub struct Job {
     pub model: PathBuf,
@@ -33,7 +51,7 @@ pub struct Job {
     pub split_mode: SplitMode,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Segment {
     pub start_ms: i64,
     pub end_ms: i64,
@@ -45,6 +63,26 @@ pub struct Segment {
 
 #[derive(Debug)]
 pub enum Event {
+    SessionStarted {
+        source: String,
+        model: String,
+        live: bool,
+    },
+    RecordingStarted {
+        device: String,
+        mode: String,
+    },
+    RecordingLevel {
+        rms: f32,
+        peak: f32,
+        seconds: f32,
+    },
+    RecordingStopped,
+    LiveProgress {
+        seconds: f32,
+    },
+    /// Current, replaceable text; only committed segments are exported.
+    LivePartial(Segment),
     LoadingModel(String),
     /// 0–100 while the model file is read and initialized
     LoadProgress(i32),
@@ -93,6 +131,32 @@ mod tests {
 
     /// Unload with nothing loaded is a no-op, and the worker must still
     /// shut down cleanly afterwards (no hang, no panic).
+    #[test]
+    fn mlx_language_uses_qwen_names_and_preserves_other_model_codes() {
+        let root = std::env::temp_dir().join(format!("language-models-{}", std::process::id()));
+        let qwen = root.join("qwen");
+        let whisper = root.join("whisper");
+        std::fs::create_dir_all(&qwen).unwrap();
+        std::fs::create_dir_all(&whisper).unwrap();
+        std::fs::write(qwen.join("config.json"), r#"{"model_type":"qwen3_asr"}"#).unwrap();
+        std::fs::write(whisper.join("config.json"), r#"{"model_type":"whisper"}"#).unwrap();
+        for (code, name) in [
+            ("en", "English"),
+            ("es", "Spanish"),
+            ("de", "German"),
+            ("it", "Italian"),
+            ("fr", "French"),
+        ] {
+            assert_eq!(mlx_language(&qwen, Some(code)).as_deref(), Some(name));
+            assert_eq!(mlx_language(&whisper, Some(code)).as_deref(), Some(code));
+        }
+        for model in [&qwen, &whisper] {
+            assert_eq!(mlx_language(model, None), None);
+            assert_eq!(mlx_language(model, Some("auto")), None);
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn unload_is_safe_with_no_model_loaded() {
         let (tx, _rx) = channel();

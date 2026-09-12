@@ -19,6 +19,39 @@ fn pct_line(label: &str, p: i32) -> String {
 impl App {
     pub fn handle_event(&mut self, event: Event) {
         match event {
+            Event::SessionStarted { .. } => {} // UI metadata was set when submitting.
+            Event::RecordingStarted { device, mode } => {
+                self.live.recording = true;
+                self.live.device = device;
+                self.live.mode = mode;
+                self.work = WorkState::Recording;
+                self.status = "Recording — speak into your microphone; R stops and exports".into();
+                self.job_log.push(format!(
+                    "microphone: {} · {}",
+                    self.live.device, self.live.mode
+                ));
+            }
+            Event::RecordingLevel { rms, peak, seconds } => {
+                self.live.level(rms, peak, seconds);
+                self.transcript.duration_secs = Some(seconds);
+            }
+            Event::RecordingStopped => {
+                if self.live.active {
+                    self.live.recording = false;
+                    self.live.stopping = true;
+                    self.status = "Microphone stopped — finishing remaining speech…".into();
+                }
+            }
+            Event::LivePartial(segment) => {
+                self.transcript.partial = if segment.text.is_empty() {
+                    None
+                } else {
+                    Some(segment)
+                };
+            }
+            Event::LiveProgress { seconds } => {
+                self.live.decoded_seconds = seconds;
+            }
             Event::LoadingModel(name) => {
                 self.job_log.push(format!("loading model {name}"));
                 self.status = format!("Loading {name}…");
@@ -34,8 +67,7 @@ impl App {
                 }
             }
             Event::ModelReady { load_secs } => {
-                self.job_log
-                    .push(format!("model ready in {load_secs:.1}s"));
+                self.job_log.push(format!("model ready in {load_secs:.1}s"));
                 self.status = format!("Model loaded in {load_secs:.1}s");
             }
             Event::Unloading => {
@@ -106,6 +138,9 @@ impl App {
                 }
             }
             Event::Segment(seg) => {
+                if self.live.active {
+                    self.transcript.partial = None;
+                }
                 self.job_log.push(format!(
                     "segment [{} → {}] {}",
                     clock_time(seg.start_ms),
@@ -126,6 +161,9 @@ impl App {
                 audio_secs,
                 language,
             } => {
+                self.live.finish();
+                self.transcript.partial = None;
+                self.transcript.duration_secs = Some(audio_secs);
                 self.work = WorkState::Idle;
                 let rtf = elapsed_secs / audio_secs.max(0.001);
                 let lang = language.as_deref().unwrap_or("?").to_string();
@@ -153,13 +191,22 @@ impl App {
                     }
                 };
                 self.job_log.push(self.status.clone());
+                // Keep the UI open on export failure so the error is reviewable.
+                if self.live.quit_after && !self.status.contains("export FAILED") {
+                    self.should_quit = true;
+                }
             }
             Event::Cancelled => {
+                self.live.finish();
+                if self.live.quit_after {
+                    self.should_quit = true;
+                }
                 self.job_log.push("job cancelled");
                 self.work = WorkState::Idle;
                 self.status = "Cancelled".into();
             }
             Event::Error(msg) => {
+                self.live.finish();
                 self.job_log.push(format!("ERROR: {msg}"));
                 self.work = WorkState::Idle;
                 self.status = format!("Error: {msg}");

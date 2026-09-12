@@ -9,6 +9,7 @@ clap = { version = "4.5", features = ["derive"] }
 whisper-rs = { version = "0.16", features = ["metal", "log_backend"] }
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["bracketed-paste"] }
+cpal = "0.16"
 symphonia = { version = "0.5", features = ["aac", "mp3", "isomp4", "alac", "aiff"] }
 rubato = "0.16"
 anyhow = "1"
@@ -21,6 +22,13 @@ sysinfo = "0.39"
 libc = "0.2.186"
 percent-encoding = "2.3"
 ureq = "2"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "ws"] }
+tokio = { version = "1", features = ["rt", "net", "sync", "time", "macros"] }
+async-stream = "0.3"
+futures-util = { version = "0.3", features = ["sink"] }
+
+[dev-dependencies]
+tokio-tungstenite = "0.29"
 
 [profile.release]
 lto = "thin"

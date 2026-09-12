@@ -1,4 +1,5 @@
 use std::fs::File;
+pub mod capture;
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -79,7 +80,10 @@ fn probe_duration_secs(path: &Path) -> Option<f32> {
     if !output.status.success() {
         return None;
     }
-    let secs: f32 = String::from_utf8_lossy(&output.stdout).trim().parse().ok()?;
+    let secs: f32 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .ok()?;
     (secs > 0.0).then_some(secs)
 }
 

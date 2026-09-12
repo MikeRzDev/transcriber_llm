@@ -7,6 +7,7 @@ use crate::transcribe::Segment;
 
 pub struct TranscriptState {
     pub segments: Vec<Segment>,
+    pub partial: Option<Segment>,
     pub scroll: usize,
     /// Stick to the newest line while segments stream in
     pub follow: bool,
@@ -29,6 +30,7 @@ impl TranscriptState {
     pub(crate) fn new() -> Self {
         Self {
             segments: Vec::new(),
+            partial: None,
             scroll: 0,
             follow: true,
             source: None,
@@ -43,6 +45,7 @@ impl TranscriptState {
     /// Reset for a new transcription job.
     pub fn begin(&mut self, source: PathBuf, model_name: String, diarization: Option<String>) {
         self.segments.clear();
+        self.partial = None;
         self.scroll = 0;
         self.follow = true;
         self.duration_secs = None;

@@ -18,7 +18,7 @@ pub(super) fn draw_model_picker(frame: &mut Frame, app: &App) {
 
     if app.library.models.is_empty() {
         frame.render_widget(
-            Paragraph::new("No .bin or .gguf models found.\n\nDownload one in Settings → Model management (s).")
+            Paragraph::new("No GGML/GGUF or MLX models found.\n\nSet the models folder or download one in Settings (s).")
                 .block(block)
                 .style(Style::default().fg(Color::Yellow))
                 .wrap(Wrap { trim: true }),
@@ -44,6 +44,18 @@ pub(super) fn draw_model_picker(frame: &mut Frame, app: &App) {
                 Span::raw(m.display_name()),
                 Span::styled(format!("  {}", m.size_human()), Style::default().fg(DIM)),
             ];
+            if m.is_dir {
+                if let Some(reason) = app.picker.live_notes.get(&m.path) {
+                    spans.push(Span::styled(
+                        if reason.is_none() {
+                            "  live ✓"
+                        } else {
+                            "  live unavailable"
+                        },
+                        Style::default().fg(if reason.is_none() { Color::Green } else { DIM }),
+                    ));
+                }
+            }
             if !crate::hw::fits(m.size_bytes) {
                 spans.push(Span::styled(
                     "  ⚠ exceeds this Mac's memory",

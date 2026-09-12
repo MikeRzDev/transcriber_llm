@@ -27,7 +27,9 @@ pub fn run(args: Args) -> Result<()> {
     let (start_dir, auto_file) = match args.path {
         Some(p) if p.is_dir() => (p, None),
         Some(p) if p.is_file() => (
-            p.parent().map(|d| d.to_path_buf()).unwrap_or_else(default_dir),
+            p.parent()
+                .map(|d| d.to_path_buf())
+                .unwrap_or_else(default_dir),
             Some(p),
         ),
         Some(p) => bail!("path not found: {}", p.display()),
@@ -36,7 +38,33 @@ pub fn run(args: Args) -> Result<()> {
 
     let (tx, rx) = channel();
     let transcriber = transcribe::spawn(tx);
+    let explicit_model = args.model.is_some();
     let mut app = App::new(start_dir, args.model, transcriber);
+    app.audio_input.selected = args.input_device;
+    if let Some(port) = args.serve {
+        if let Err(error) = app.start_stream_service(port) {
+            app.transcriber.shutdown();
+            return Err(error);
+        }
+    }
+    if let Some(dir) = args.models_dir {
+        if !dir.is_dir() {
+            app.transcriber.shutdown();
+            bail!("models folder not found: {}", dir.display());
+        }
+        app.library.dir = dir;
+        app.refresh_models();
+        if !explicit_model {
+            app.library.selected = crate::models::pick_default(
+                &app.library.models,
+                app.config.default_model.as_deref(),
+            )
+            .cloned();
+        }
+    }
+    if let Some(language) = args.language {
+        app.config.language = Some(language);
+    }
     if let Some(file) = auto_file {
         // Confirmed like any other start — the TUI never begins a job
         // without asking
@@ -45,6 +73,9 @@ pub fn run(args: Args) -> Result<()> {
 
     let mut terminal = ratatui::init();
     let _ = crossterm::execute!(std::io::stdout(), EnableBracketedPaste);
+    if args.realtime {
+        app.start_live();
+    }
 
     // Fallback for terminals without bracketed paste
     let mut drops = DropDetector::new();
@@ -68,7 +99,10 @@ pub fn run(args: Args) -> Result<()> {
                 match event::read()? {
                     TermEvent::Key(key) if key.kind == KeyEventKind::Press => {
                         let mut consumed = false;
-                        let typing_in_modal = app.settings.open || app.picker.open || app.hub.open;
+                        let typing_in_modal = app.settings.open
+                            || app.picker.open
+                            || app.hub.open
+                            || app.audio_input.open;
                         if let KeyCode::Char(c) = key.code {
                             if !typing_in_modal && !key.modifiers.contains(KeyModifiers::CONTROL) {
                                 consumed = drops.feed_char(c);
@@ -102,5 +136,6 @@ pub fn run(args: Args) -> Result<()> {
     let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
     ratatui::restore();
     app.transcriber.shutdown();
+    app.stream_server.take();
     result
 }

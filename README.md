@@ -23,6 +23,15 @@ A terminal speech-to-text client for [whisper.cpp](https://github.com/ggerganov/
 
 ## Setup
 
+To build an optimized executable into `binary/` at the project root:
+
+```sh
+./build.sh
+./binary/transcribe-stt --help
+```
+
+The build script requires Rust, CMake, and the Xcode command line tools. It also recognizes CMake in this checkout's `.venv-realtime` environment. The existing installation script below can set up missing dependencies. MLX models still use the Python runtime described below.
+
 ```sh
 # check deps (Xcode CLT, Homebrew, Rust, cmake, ffmpeg), install anything
 # missing, then compile and install the transcribe-stt binary into ~/.cargo/bin
@@ -59,6 +68,56 @@ transcribe-stt --download-test-model
 Supported audio: wav, mp3, m4a (AAC/ALAC), flac, ogg/vorbis, opus, aiff, caf, wma, mka, weba, amr, ac3, dts, ape, wv, au, mp2, spx, tta, mpc, ra, gsm, w64 (formats symphonia can't decode natively go through ffmpeg).
 Supported video (audio track is ripped automatically via ffmpeg, with a live progress gauge; cancellable like any job): mp4, mov, m4v, mkv, webm, avi, ts, mts, m2ts, 3gp, 3g2, flv, wmv, mpg, mpeg, m2v, ogv, vob, asf, f4v, divx, rm, rmvb.
 
+### Live microphone transcription
+
+Press **Shift-R** (`R`) to start recording with the selected MLX speech model, or launch directly:
+
+```sh
+# Use models already downloaded on an external drive; m switches models.
+./scripts/run-realtime.sh /Volumes/MikeExternal/ai_models/speech-to-text-realtime
+
+# Equivalent flags for an installed binary:
+transcribe-stt --realtime --models-dir /path/to/models -l es
+transcribe-stt --realtime -m /path/to/Qwen3-ASR-0.6B-8bit -l es
+```
+
+The left pane becomes a microphone monitor: a waveform of the actual input amplitude over the last 12 seconds, recording indicator, elapsed time, dBFS level, clipping/quiet indicator, input device and pending audio time. The right pane switches to the **live transcript**, showing partial text in yellow as the model produces it. New text scrolls into view automatically. `↑↓`, `j k`, or PageUp/PageDown pause following; **G** follows the newest text again. `l` opens the engine log.
+
+**R** stops the microphone immediately, finishes queued speech (including the final partial audio packet), and automatically exports the transcript using the configured formats. **q** stops, exports, then quits. **c** cancels inference; **Ctrl-C** quits immediately. Cancellation/failure keeps the visible text but does not auto-export unfinished results. After stopping, **r** returns to the file browser; **R** starts a fresh session. Microphone audio stays in bounded memory and is not saved as an audio file. Live diarization is off; exported timestamps are approximate spans of microphone time rather than word alignment.
+
+Live model support:
+
+| Local model | Live behavior |
+| --- | --- |
+| Voxtral-Mini-4B-Realtime-2602, mlx-audio 4-bit / fp16 | Continuous audio streaming when the runtime provides `create_streaming_session`; otherwise short speech windows with streamed text |
+| Qwen3-ASR, including 0.6B / 1.7B MLX variants | Model stays loaded; text streams from speech windows of up to 4 seconds, ending earlier on a pause |
+| Other mlx-audio ASR folders | Same speech-window path; token updates when the model exposes `generate(stream=True)`, otherwise completed windows |
+| Voxtral-Mini-4B-Realtime-6bit converted with voxmlx | Incompatible conversion; select an mlx-audio Voxtral folder instead |
+| Qwen3-ForcedAligner | Requires existing text; cannot transcribe live audio |
+| GGML/GGUF Whisper | File transcription only; select an MLX folder for live mode |
+
+The model picker marks compatible MLX folders with `live ✓`. `--models-dir` selects the library for the current session without moving or downloading weights. A model is loaded **once per recording session**, before the microphone starts. Local inference runs with Hugging Face offline mode enabled. Missing MLX runtime packages are provisioned through the existing app venv; model weights are never downloaded by live mode. macOS may ask you to allow your terminal under **Privacy & Security → Microphone**. Press **a** to choose the built-in, USB, or a connected Bluetooth microphone; **r** refreshes the device list after connecting a headset. **System default** follows the input selected in macOS Sound settings when recording starts. The chosen input is retained between recordings in the current app session, and its actual name appears beside the waveform. Stop with **R** before switching inputs. If an explicitly chosen Bluetooth microphone disconnects, recording reports an error rather than switching to another microphone.
+
+To list inputs without recording, run `transcribe-stt --list-input-devices` (or `./scripts/run-realtime.sh --list-input-devices` from this checkout). You can also select an exact listed name with `--input-device "AirPods Microphone"`. Pair and connect Bluetooth microphones in macOS first.
+
+Latency depends on the model and hardware. Pending audio shows when inference is falling behind; a 12.8-second capture queue limit stops the session with an actionable error rather than silently dropping speech. The speech-window fallback uses a simple input-level silence detector and can cut continuous speech at a window boundary. Pin Qwen's language with `-l es` or the TUI language setting; native Voxtral detects its own language.
+
+The streaming bridge follows the [mlx-audio Voxtral session API](https://github.com/Blaizzy/mlx-audio/blob/main/mlx_audio/stt/models/voxtral_realtime/streaming.py) and [Qwen streaming interface](https://github.com/Blaizzy/mlx-audio/blob/main/mlx_audio/stt/models/qwen3_asr/qwen3_asr.py).
+
+### Stream text to another app
+
+Press **v** to toggle the local text service, or add `--serve` (`--serve=9000` for another port):
+
+```sh
+./scripts/run-realtime.sh /Volumes/MikeExternal/ai_models/speech-to-text-realtime --serve
+# In another terminal:
+curl -N http://127.0.0.1:8765/events
+```
+
+SSE is available at `http://127.0.0.1:8765/events`, WebSocket at `ws://127.0.0.1:8765/ws`, and the current transcript snapshot at `/transcript`. Both streams carry the same JSON messages for partial text, committed segments, session boundaries and completion. New clients receive the current state immediately. Updates leave the worker before the TUI polls them; slow subscribers do not block inference. The service also works with headless file transcription and stays local to this Mac.
+
+See [the service protocol and client examples](docs/text-stream-service.md) for connection code, reconnect handling, transport choices and retention limits.
+
 ### Drag & drop
 
 Drop any audio or video file from Finder onto the terminal window and the start-confirmation dialog opens (drop a folder to browse it). Works via bracketed paste, with a key-burst fallback for terminals that don't support it.
@@ -69,6 +128,9 @@ Drop any audio or video file from Finder onto the terminal window and the start-
 | --- | --- |
 | `Tab` | Switch between file browser and transcript |
 | `Enter` | Open directory / transcribe selected file (a confirmation dialog shows the file, model, and export formats before every job) |
+| `R` | Start live microphone transcription / stop and export |
+| `a` | Select microphone input (built-in, USB, or connected Bluetooth) |
+| `v` | Start/stop the local SSE and WebSocket text service |
 | `m` | Model picker (lists `.bin`/`.gguf` files and MLX model folders in the models folder) |
 | `s` | Settings: default model, models & output folders (via a built-in directory browser), export formats, model management, diarization, split mode, language, Hugging Face token (persisted) |
 | `d` | Cycle the diarization strategy (off → auto → tinydiarize → embeddings → pyannote) |
@@ -120,7 +182,9 @@ All chunking happens on the decoded 16 kHz f32 samples in memory — nothing is 
 
 ## Language
 
-Whisper auto-detects the language from the first 30 seconds by default. If you know it in advance, set it in settings (`s` → Language, ISO 639-1 code like `en`/`es`/`de`) or pass `-l <code>` — this skips detection, avoids misdetection on short or noisy clips, and steers decoding from the first token. English-only models (`.en`) always use `en`.
+Press `s` → **Input language** to choose **Auto, English, Spanish, German, Italian, or French** with `↑↓` and `Enter` (`Esc` cancels). The selection is saved and used for subsequent file and microphone transcriptions, including after switching models or restarting the app. Auto lets the model detect the input language; a specific language skips detection on models that support it. Whisper receives the language code and Qwen receives the full language name. English-only models (`.en`) always use English; native Voxtral streaming continues to detect its own language because its API has no language override. Changing this setting during a transcription applies to the next job or microphone session.
+
+For other languages, use the `i` shortcut to enter an ISO 639-1 code, or pass `-l <code>`. CLI language arguments override the saved preference for that run; `-l auto` restores automatic detection. Headless transcription also uses the saved preference when no CLI language is supplied.
 
 ## Models & settings
 
@@ -143,11 +207,22 @@ Directory models run on the MLX engine, which shells out to [mlx-audio](https://
 ## Testing
 
 ```sh
-cargo test                    # 94 unit tests, fast and hermetic
+cargo test                    # unit tests, no model downloads
 cargo test -- --ignored       # 3 transcription e2e tests (real model, Metal, ffmpeg,
                               # diarization) + 2 live Hugging Face tests (single-file
                               # download, whole-folder MLX download with manifest)
 ```
+
+Live checks (no microphone or model downloads for the unit tests):
+
+```sh
+python3 -m unittest discover -s tests -p test_realtime.py
+# Optional real-model smoke test; WAV must contain speech, PCM16 mono, 16 kHz.
+# Use an interpreter with mlx-audio installed (e.g. the app-managed venv).
+python scripts/verify-realtime.py --model /path/to/model --audio speech.wav
+```
+
+Live tests cover signal levels, continuous resampling and final audio tails, silence windows, partial text and both MLX output shapes, narrow terminal rendering, follow/pause/resume, cancellation/error state and exactly-once export of committed text. Physical microphone permission and device behavior require a manual recording session.
 
 Unit tests cover audio decode/downmix/resampling (incl. the WAV writer round trip), model discovery (files and MLX folders, manifest integrity), config parsing and platform defaults, drop-path parsing (quotes, backslash escapes, `file://` URLs), the app state machine including auto-export, the directory picker, the model-management modal (search input, navigation, download events, variant folders, platform gating), Hub API response parsing (file listing, variant detection), mlx-audio JSON output mapping, and every export format. The e2e tests run the actual binary headless against the demo WAV and MP4. Live MLX inference needs mlx-audio and a downloaded model, so it stays a manual test.
 
@@ -160,6 +235,8 @@ The crate is a library (`transcribe_stt`) plus a thin binary: `src/main.rs` only
   - `browser.rs` (`FileBrowser` — directory listing/navigation), `library.rs` (`ModelLibrary` + `ModelPicker`), `settings.rs` (`SettingsUi`, `SettingsRow`, directory picker, move-models prompt), `transcript.rs` (`TranscriptState` — segments, scroll/follow), `hub_state.rs` (`HubState` — the Model management modal), `events.rs` (worker-event handling incl. auto-export), `drop.rs` (drag-and-drop path parsing + the `DropDetector` key-burst fallback), `keys.rs` (the modal-priority key router)
 - `src/ui.rs` + `src/ui/` — rendering, one file per widget/modal, all reading `&App` (scroll clamping runs in the update phase, never during draw); `theme.rs` holds the shared colors/spinner/highlight style, `layout.rs` the screen regions
 - `src/transcribe.rs` + `src/transcribe/` — `worker.rs`: the worker thread executing jobs; `backend.rs`: the common `Engine` interface every backend implements, plus the model-shape routing (`Backends::for_model` — a directory routes to MLX, a file to whisper); `backend/whisper_metal.rs`: whisper.cpp via whisper-rs, resident context between jobs, cancellation via whisper's abort callback; `backend/mlx.rs`: the mlx-audio subprocess runner (runtime probe, temp-WAV hand-off, JSON parsing, kill-on-cancel). New backends slot in as new submodules behind the same trait
+- `src/stream_service.rs` + `src/stream_service/` — optional loopback HTTP/SSE/WebSocket runtime, shared transcript snapshots and bounded subscriptions; the worker publishes before UI consumption
+- `src/audio/capture.rs` / `src/transcribe/realtime.rs` / `src/transcribe/realtime.py` — independent CPAL microphone capture, continuous sinc resampling, bounded buffering, persistent MLX process and JSON-lines streaming protocol; `src/app/realtime.rs` / `src/ui/realtime.rs` own the recording state and waveform monitor
 - `src/audio.rs` — symphonia decode (audio) → mono downmix → rubato sinc resample to 16 kHz; video and unsupported codecs go through ffmpeg, which streams raw 16 kHz mono f32 over stdout (no temp files) with byte-accurate extraction progress against the ffprobe duration; both paths are cancellable mid-decode; plus the 16 kHz WAV writer used to hand audio to subprocess engines
 - `src/hub.rs` + `src/hub/` — Model management backend: `api.rs` (Hugging Face search, repo file listing, directory-variant detection, serde-typed responses) and `download.rs` (streaming `.part` downloads with retry; whole-folder downloads with aggregated progress, integrity manifest, and missing-file repair), each on worker threads; the suggested list is embedded from `assets/suggested_models.json`
 - `src/split.rs` — long-audio chunk planner (engine capability descriptor, silence-aware cut placement, overlap fallback)

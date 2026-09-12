@@ -235,7 +235,7 @@ fn install_runtime(
     cancel: &Arc<AtomicBool>,
 ) -> anyhow::Result<Option<PathBuf>> {
     let Some(python) = pyrt::install_packages(
-        &["mlx-audio"],
+        &["mlx-audio[stt]"],
         "mlx-audio runtime (one-time setup, ~2 min)",
         "several hundred MB, can take minutes",
         INSTALL_HINT,
@@ -250,6 +250,13 @@ fn install_runtime(
         "mlx-audio installed but does not import — {INSTALL_HINT}"
     );
     Ok(Some(python))
+}
+
+pub(crate) fn live_python(
+    events: &Sender<Event>,
+    cancel: &Arc<AtomicBool>,
+) -> anyhow::Result<Option<PathBuf>> {
+    MlxEngine::new().ensure_runtime(events, cancel)
 }
 
 /// Whether the MLX runtime is ready, for UI badges. The venv check is a
@@ -319,8 +326,8 @@ impl Engine for MlxEngine {
             .args(["--format", "json"]);
         // Only forward an explicit hint; each family has its own default
         // (auto-detection or English) that a blind flag would override.
-        if let Some(lang) = &job.language {
-            cmd.args(["--language", lang]);
+        if let Some(lang) = crate::transcribe::mlx_language(&job.model, job.language.as_deref()) {
+            cmd.args(["--language", &lang]);
         }
         // mlx imports silently for several seconds before the first line
         // of child output — say so instead of appearing stalled
@@ -447,12 +454,17 @@ fn parse_output_json(text: &str, audio_secs: f32) -> anyhow::Result<Vec<Segment>
         .iter()
         .find_map(|key| v[*key].as_array().filter(|a| !a.is_empty()));
     let Some(list) = list else {
-        return Ok(whole_file_segment(v["text"].as_str().unwrap_or(""), audio_secs)
-            .into_iter()
-            .collect());
+        return Ok(
+            whole_file_segment(v["text"].as_str().unwrap_or(""), audio_secs)
+                .into_iter()
+                .collect(),
+        );
     };
     let seconds = |item: &serde_json::Value, key: &str, alt: &str| {
-        item[key].as_f64().or_else(|| item[alt].as_f64()).unwrap_or(0.0)
+        item[key]
+            .as_f64()
+            .or_else(|| item[alt].as_f64())
+            .unwrap_or(0.0)
     };
     Ok(list
         .iter()
@@ -477,7 +489,10 @@ fn speaker_index(v: &serde_json::Value) -> Option<u8> {
         return Some(n.min(u8::MAX as u64) as u8);
     }
     let digits: String = v.as_str()?.chars().filter(|c| c.is_ascii_digit()).collect();
-    digits.parse::<u64>().ok().map(|n| n.min(u8::MAX as u64) as u8)
+    digits
+        .parse::<u64>()
+        .ok()
+        .map(|n| n.min(u8::MAX as u64) as u8)
 }
 
 #[cfg(test)]
@@ -534,7 +549,9 @@ mod tests {
         assert_eq!(segments[0].end_ms, 12500);
         assert_eq!(segments[0].text, "just text");
 
-        assert!(parse_output_json(r#"{"text": ""}"#, 1.0).unwrap().is_empty());
+        assert!(parse_output_json(r#"{"text": ""}"#, 1.0)
+            .unwrap()
+            .is_empty());
         assert!(parse_output_json("not json", 1.0).is_err());
     }
 

@@ -11,11 +11,11 @@ use crate::export::ExportFormat;
 use crate::hub::HubEvent;
 use crate::models;
 
-/// The rows of the settings menu, in display order. Diarization and
-/// language live on the base screen as hotkeys (`d`, `i`), not here.
+/// The rows of the settings menu, in display order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SettingsRow {
     DefaultModel,
+    Language,
     ModelsFolder,
     OutputFolder,
     ExportFormats,
@@ -25,8 +25,9 @@ pub enum SettingsRow {
 }
 
 impl SettingsRow {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::DefaultModel,
+        Self::Language,
         Self::ModelsFolder,
         Self::OutputFolder,
         Self::ExportFormats,
@@ -59,6 +60,8 @@ pub struct SettingsUi {
     pub move_prompt: Option<MovePrompt>,
     /// Some(cursor) while the export-formats checkbox dialog is open
     pub formats_cursor: Option<usize>,
+    /// Some(cursor) while the input-language picker is open
+    pub language_cursor: Option<usize>,
 }
 
 impl SettingsUi {
@@ -70,6 +73,7 @@ impl SettingsUi {
             dir_picker: None,
             move_prompt: None,
             formats_cursor: None,
+            language_cursor: None,
         }
     }
 }
@@ -171,6 +175,26 @@ pub struct MovePrompt {
 
 impl App {
     pub(crate) fn settings_key(&mut self, code: KeyCode) {
+        if let Some(cursor) = self.settings.language_cursor {
+            match code {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('s') => {
+                    self.settings.language_cursor = None;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.settings.language_cursor = Some(cursor.saturating_sub(1));
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.settings.language_cursor =
+                        Some((cursor + 1).min(config::INPUT_LANGUAGES.len() - 1));
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    self.set_language(config::INPUT_LANGUAGES[cursor].0);
+                    self.settings.language_cursor = None;
+                }
+                _ => {}
+            }
+            return;
+        }
         if let Some(cursor) = self.settings.formats_cursor {
             match code {
                 KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('s') => {
@@ -217,6 +241,15 @@ impl App {
             }
             KeyCode::Enter => match self.settings.selected {
                 SettingsRow::DefaultModel => self.open_model_picker(),
+                SettingsRow::Language => {
+                    let code = self.config.language.as_deref().unwrap_or("auto");
+                    self.settings.language_cursor = Some(
+                        config::INPUT_LANGUAGES
+                            .iter()
+                            .position(|(c, _)| *c == code)
+                            .unwrap_or(0),
+                    );
+                }
                 SettingsRow::ModelsFolder => self.open_dir_picker(DirTarget::Models),
                 SettingsRow::OutputFolder => self.open_dir_picker(DirTarget::Output),
                 SettingsRow::ExportFormats => self.settings.formats_cursor = Some(0),
@@ -328,12 +361,18 @@ impl App {
             self.status = "Language: auto-detect".into();
         } else if whisper_rs::get_lang_id(&code).is_some() {
             self.config.language = Some(code.clone());
-            self.status = format!("Language set to {code} (skips auto-detection)");
+            self.status = format!(
+                "Input language: {} — applies to the next transcription where supported",
+                config::language_label(Some(&code))
+            );
         } else {
             self.status = format!("Unknown language code: {code} (use e.g. en, es, de, or auto)");
             return;
         }
-        let _ = config::save(&self.config);
+        if let Err(error) = config::save(&self.config) {
+            self.status =
+                format!("Language changed for this session; saving settings failed: {error}");
+        }
     }
 
     /// Toggle one export format on/off and persist. The last selected

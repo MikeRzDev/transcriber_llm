@@ -18,6 +18,10 @@ impl App {
             self.start_prompt_key(code);
             return;
         }
+        if self.audio_input.open {
+            self.audio_input_key(code);
+            return;
+        }
         if self.naming.is_some() {
             self.naming_key(code);
             return;
@@ -88,10 +92,9 @@ impl App {
                     "Speaker count needs diarization — press d to select a strategy first".into();
             }
             DiarizeMethod::Tdrz => {
-                self.status =
-                    "TinyDiarize always labels 2 speakers — the count applies to the \
+                self.status = "TinyDiarize always labels 2 speakers — the count applies to the \
                      embeddings/pyannote strategies (d cycles)"
-                        .into();
+                    .into();
             }
             DiarizeMethod::Embedding | DiarizeMethod::Pyannote => {
                 self.speakers_input = Some(
@@ -215,14 +218,27 @@ impl App {
 
     fn main_key(&mut self, code: KeyCode) {
         match code {
-            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Char('q') => self.request_quit(),
+            KeyCode::Char('R') => {
+                if self.live.active {
+                    self.stop_live();
+                } else {
+                    self.start_live();
+                }
+            }
             KeyCode::Tab => {
+                if self.live.visible {
+                    self.focus = Focus::Transcript;
+                    return;
+                }
                 self.focus = match self.focus {
                     Focus::Files => Focus::Transcript,
                     Focus::Transcript => Focus::Files,
                 };
             }
             KeyCode::Char('m') => self.open_model_picker(),
+            KeyCode::Char('a') => self.open_audio_inputs(),
+            KeyCode::Char('v') => self.toggle_stream_service(),
             KeyCode::Char('s') => {
                 self.settings.selected = SettingsRow::DefaultModel;
                 self.settings.open = true;
@@ -237,18 +253,20 @@ impl App {
             }
             KeyCode::Char('e') => self.export_log(),
             KeyCode::Char('x') => self.clear_log(),
-            KeyCode::Char('c') => {
-                if self.busy() && self.work != WorkState::UnloadingModel {
-                    self.job_log.push("cancel requested");
-                    self.transcriber.request_cancel();
-                    self.status = "Cancelling…".into();
+            KeyCode::Char('c') if self.busy() && self.work != WorkState::UnloadingModel => {
+                self.job_log.push("cancel requested");
+                self.transcriber.request_cancel();
+                self.status = "Cancelling…".into();
+            }
+            KeyCode::Char('r') => {
+                self.browser.refresh();
+                if !self.busy() {
+                    self.live.visible = false;
+                    self.focus = Focus::Files;
                 }
             }
-            KeyCode::Char('r') => self.browser.refresh(),
-            KeyCode::Enter => {
-                if self.focus == Focus::Files {
-                    self.enter_selected();
-                }
+            KeyCode::Enter if self.focus == Focus::Files => {
+                self.enter_selected();
             }
             KeyCode::Up | KeyCode::Char('k') => match self.focus {
                 Focus::Files => self.browser.select_prev(),

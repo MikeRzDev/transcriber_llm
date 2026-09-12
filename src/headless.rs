@@ -19,8 +19,9 @@ pub fn run(args: &Args) -> Result<()> {
     };
     let strategy = match args.diarize.as_deref() {
         None => DiarizeStrategy::Off,
-        Some(s) => DiarizeStrategy::parse(s)
-            .ok_or_else(|| anyhow::anyhow!("unknown diarization strategy: {s} (use off, auto, tdrz, or embedding)"))?,
+        Some(s) => DiarizeStrategy::parse(s).ok_or_else(|| {
+            anyhow::anyhow!("unknown diarization strategy: {s} (use off, auto, tdrz, or embedding)")
+        })?,
     };
 
     let mut cfg = config::load();
@@ -30,7 +31,10 @@ pub fn run(args: &Args) -> Result<()> {
     if args.speakers.is_some() {
         cfg.diarize_speakers = args.speakers.filter(|n| *n > 0);
     }
-    let models_dir = config::resolve_models_dir(&cfg);
+    let models_dir = args
+        .models_dir
+        .clone()
+        .unwrap_or_else(|| config::resolve_models_dir(&cfg));
     let found = models::scan_models(&models_dir);
     let model = args.model.clone().or_else(|| {
         models::pick_default(&found, cfg.default_model.as_deref()).map(|m| m.path.clone())
@@ -69,13 +73,19 @@ pub fn run(args: &Args) -> Result<()> {
     };
     if method != DiarizeMethod::None {
         eprintln!("diarization: {}", method.label());
-        if let Some(note) =
-            diarize::download_note(method, &found, &models_dir, &cfg.diarize_models)
+        if let Some(note) = diarize::download_note(method, &found, &models_dir, &cfg.diarize_models)
         {
             eprintln!("diarization: {note}");
         }
     }
-    run_headless(model, audio, method, &cfg, args.language.clone())
+    run_headless(
+        model,
+        audio,
+        method,
+        &cfg,
+        args.language.clone().or_else(|| cfg.language.clone()),
+        args.serve,
+    )
 }
 
 /// Fetch the smallest whisper model into the models folder — enough for a
@@ -133,12 +143,23 @@ fn run_headless(
     diarize: DiarizeMethod,
     cfg: &config::Config,
     language: Option<String>,
+    serve: Option<u16>,
 ) -> Result<()> {
     eprintln!("model: {}", model.display());
     eprintln!("audio: {}", audio.display());
 
     let (tx, rx) = channel();
     let mut transcriber = transcribe::spawn(tx);
+    let server = serve
+        .map(|port| crate::stream_service::StreamServer::start(port, transcriber.text_stream()))
+        .transpose()?;
+    if let Some(server) = &server {
+        eprintln!(
+            "text service: http://{}/events · ws://{}/ws",
+            server.address(),
+            server.address()
+        );
+    }
     transcriber.submit(Job {
         model,
         audio,
@@ -151,12 +172,14 @@ fn run_headless(
 
     let result = run_headless_loop(rx);
     transcriber.shutdown();
+    drop(server);
     result
 }
 
 fn run_headless_loop(rx: std::sync::mpsc::Receiver<Event>) -> Result<()> {
     for event in rx {
         match event {
+            Event::SessionStarted { .. } => {}
             Event::LoadingModel(name) => eprintln!("loading {name}…"),
             Event::LoadProgress(_) => {}
             Event::ModelReady { load_secs } => eprintln!("model ready in {load_secs:.1}s"),
@@ -166,6 +189,11 @@ fn run_headless_loop(rx: std::sync::mpsc::Receiver<Event>) -> Result<()> {
             Event::DecodeProgress(_) => {}
             Event::AudioInfo { duration_secs } => eprintln!("audio: {duration_secs:.1}s"),
             Event::Progress(_) => {}
+            Event::RecordingStarted { .. }
+            | Event::RecordingLevel { .. }
+            | Event::RecordingStopped
+            | Event::LivePartial(_)
+            | Event::LiveProgress { .. } => {}
             Event::EngineLog(line) => eprintln!("{line}"),
             Event::EngineHeartbeat(secs) => eprintln!("engine working… {secs}s elapsed"),
             Event::Segment(seg) => {

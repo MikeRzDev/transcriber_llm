@@ -1,5 +1,8 @@
 # build artifacts
 /target/
+/binary/
+/.venv-realtime/
+__pycache__/
 
 # macOS noise
 .DS_Store

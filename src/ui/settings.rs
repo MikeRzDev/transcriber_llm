@@ -4,6 +4,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, SettingsRow};
+use crate::config::{language_label, INPUT_LANGUAGES};
 use crate::export::ExportFormat;
 use crate::ui::layout::{centered_rect, centered_rect_rows};
 use crate::ui::theme::{highlight_style, ACCENT, DIM};
@@ -60,6 +61,14 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
         Line::from(Span::styled(
             format!("  Default model:  {model}"),
             row_style(SettingsRow::DefaultModel),
+        )),
+        Line::raw(""),
+        Line::from(Span::styled(
+            format!(
+                "  Input language: {}",
+                language_label(app.config.language.as_deref())
+            ),
+            row_style(SettingsRow::Language),
         )),
         Line::raw(""),
         Line::from(Span::styled(
@@ -132,6 +141,44 @@ fn masked_token(token: &str) -> String {
         .rev()
         .collect();
     format!("set (…{tail})")
+}
+
+pub(super) fn draw_input_languages(frame: &mut Frame, app: &App) {
+    let cursor = app.settings.language_cursor.unwrap_or(0);
+    let selected = app.config.language.as_deref().unwrap_or("auto");
+    let mut lines = Vec::new();
+    for (i, (code, label)) in INPUT_LANGUAGES.iter().enumerate() {
+        let mark = if *code == selected { "●" } else { "○" };
+        let description = if *code == "auto" {
+            " (detect automatically)"
+        } else {
+            ""
+        };
+        lines.push(Line::from(Span::styled(
+            format!("  {mark} {label}{description}"),
+            if i == cursor {
+                highlight_style()
+            } else {
+                Style::default()
+            },
+        )));
+    }
+    lines.push(Line::raw(""));
+    for text in [
+        "  Used for new file and microphone transcriptions.",
+        "  Skips language detection where supported.",
+        "  English-only models stay English; Voxtral uses Auto.",
+        "  ↑↓ select · Enter save · Esc cancel",
+    ] {
+        lines.push(Line::from(Span::styled(text, Style::default().fg(DIM))));
+    }
+    let area = centered_rect_rows(76, lines.len() as u16 + 2, frame.area());
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(" input language ");
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 /// Checkbox dialog over the settings modal: which formats every

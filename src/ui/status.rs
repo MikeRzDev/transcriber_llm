@@ -9,6 +9,22 @@ use crate::ui::theme::{spinner_frame, ACCENT, DIM};
 
 pub(super) fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     match &app.work {
+        WorkState::Recording => {
+            let label = if app.live.recording && !app.live.stopping {
+                "● REC"
+            } else {
+                "Finishing"
+            };
+            frame.render_widget(
+                Paragraph::new(format!(
+                    "{label}  {}  {}",
+                    crate::format::clock_time((app.live.seconds * 1000.0) as i64),
+                    app.status
+                ))
+                .style(Style::default().fg(Color::Cyan)),
+                area,
+            );
+        }
         // A negative progress means the engine reports none (MLX) or the
         // media duration is unknown (ffmpeg extraction) — fall through to
         // the indeterminate spinner below.
@@ -63,6 +79,13 @@ fn key_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             ("y/n", "shortcuts"),
             ("Esc", "cancel"),
         ]
+    } else if app.audio_input.open {
+        vec![
+            ("↑↓", "select"),
+            ("Enter", "use microphone"),
+            ("r", "refresh"),
+            ("Esc", "close"),
+        ]
     } else if app.naming.is_some() {
         vec![
             ("↑↓", "select"),
@@ -103,6 +126,12 @@ fn key_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             ("Enter", "set default model"),
             ("Esc", "close"),
         ]
+    } else if app.settings.language_cursor.is_some() {
+        vec![
+            ("↑↓", "select language"),
+            ("Enter", "save"),
+            ("Esc", "cancel"),
+        ]
     } else if app.settings.formats_cursor.is_some() {
         vec![
             ("↑↓", "select"),
@@ -128,6 +157,20 @@ fn key_hints(app: &App) -> Vec<(&'static str, &'static str)> {
         // The cancel key only exists while there is a job to cancel
         let cancellable = app.busy() && app.work != WorkState::UnloadingModel;
         let mut keys: Vec<(&str, &str)> = Vec::new();
+        keys.push((
+            "R",
+            if app.live.active {
+                "stop & export"
+            } else {
+                "record live"
+            },
+        ));
+        if app.live.visible {
+            keys.push(("G", "follow latest"));
+        }
+        if app.live.visible && !app.live.active {
+            keys.push(("r", "files"));
+        }
         if cancellable {
             keys.push(("c", "cancel job"));
         }
@@ -139,6 +182,15 @@ fn key_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             ("e", "export log"),
             ("x", "clear log"),
             ("m", "models"),
+            ("a", "microphone"),
+            (
+                "v",
+                if app.stream_server.is_some() {
+                    "stop text server"
+                } else {
+                    "serve text"
+                },
+            ),
             ("s", "settings"),
             ("d", "diarize"),
             ("i", "language"),
@@ -167,10 +219,7 @@ fn hint_width(key: &str, desc: &str) -> usize {
 
 /// Greedy-wrap the hints into rows that fit `width` columns. Always at
 /// least one row; a hint wider than the window gets a row to itself.
-fn wrap_hints<'a>(
-    hints: &[(&'a str, &'a str)],
-    width: usize,
-) -> Vec<Vec<(&'a str, &'a str)>> {
+fn wrap_hints<'a>(hints: &[(&'a str, &'a str)], width: usize) -> Vec<Vec<(&'a str, &'a str)>> {
     let mut rows: Vec<Vec<(&str, &str)>> = vec![Vec::new()];
     let mut used = 0;
     for &(key, desc) in hints {
@@ -189,11 +238,12 @@ fn wrap_hints<'a>(
 /// exactly this many lines, so nothing is ever clipped.
 pub(super) fn keys_rows(app: &App, width: u16) -> u16 {
     wrap_hints(&key_hints(app), width.max(1) as usize).len() as u16
+        + u16::from(app.stream_server.is_some())
 }
 
 pub(super) fn draw_keys(frame: &mut Frame, area: Rect, app: &App) {
     let hints = key_hints(app);
-    let lines: Vec<Line> = wrap_hints(&hints, area.width.max(1) as usize)
+    let mut lines: Vec<Line> = wrap_hints(&hints, area.width.max(1) as usize)
         .into_iter()
         .map(|row| {
             let mut spans: Vec<Span> = Vec::new();
@@ -207,6 +257,19 @@ pub(super) fn draw_keys(frame: &mut Frame, area: Rect, app: &App) {
             Line::from(spans)
         })
         .collect();
+    if let Some(server) = &app.stream_server {
+        lines.insert(
+            0,
+            Line::styled(
+                format!(
+                    " Text service {} · SSE /events · WS /ws · {} client(s)",
+                    server.address(),
+                    server.clients()
+                ),
+                Style::default().fg(ACCENT),
+            ),
+        );
+    }
     frame.render_widget(Paragraph::new(lines), area);
 }
 

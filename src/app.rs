@@ -2,6 +2,7 @@
 //! UI concern; the per-concern logic lives in the submodules below, and
 //! `ui` renders it all read-only.
 
+mod audio_input;
 mod browser;
 mod drop;
 mod events;
@@ -10,9 +11,11 @@ mod job_log;
 mod keys;
 mod library;
 mod naming;
+mod realtime;
 mod settings;
 mod transcript;
 
+pub use audio_input::AudioInputState;
 pub(crate) use browser::file_name;
 pub use browser::{scroll_window, FileBrowser, FileEntry};
 pub use drop::DropDetector;
@@ -20,6 +23,7 @@ pub use hub_state::{DefaultEntry, Download, EntryKind, HubList, HubState, RepoVi
 pub use job_log::JobLog;
 pub use library::{ModelLibrary, ModelPicker};
 pub use naming::{NamingRow, SpeakerNaming};
+pub use realtime::LiveState;
 pub use settings::{DirPicker, DirRow, DirTarget, MovePrompt, SettingsRow, SettingsUi};
 pub use transcript::TranscriptState;
 
@@ -45,6 +49,7 @@ pub enum Focus {
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkState {
     Idle,
+    Recording,
     LoadingModel {
         name: String,
         progress: i32,
@@ -112,6 +117,9 @@ pub struct App {
     pub job_log: JobLog,
     /// Right pane shows the job log instead of the transcript (`l`)
     pub show_log: bool,
+    pub live: LiveState,
+    pub audio_input: AudioInputState,
+    pub stream_server: Option<crate::stream_service::StreamServer>,
 
     pub transcriber: Transcriber,
     hub_tx: Sender<HubEvent>,
@@ -170,6 +178,9 @@ impl App {
             job_log: JobLog::new(),
             // The log view is the default; `l` switches to the transcript
             show_log: true,
+            live: LiveState::default(),
+            audio_input: AudioInputState::default(),
+            stream_server: None,
             transcriber,
             hub_tx,
             hub_rx,
@@ -178,6 +189,32 @@ impl App {
 
     pub fn busy(&self) -> bool {
         self.work != WorkState::Idle
+    }
+
+    pub fn start_stream_service(&mut self, port: u16) -> Result<()> {
+        if self.stream_server.is_some() {
+            return Ok(());
+        }
+        let server =
+            crate::stream_service::StreamServer::start(port, self.transcriber.text_stream())?;
+        self.status = format!(
+            "Text service: http://{}/events · ws://{}/ws",
+            server.address(),
+            server.address()
+        );
+        self.job_log.push(&self.status);
+        self.stream_server = Some(server);
+        Ok(())
+    }
+
+    pub fn toggle_stream_service(&mut self) {
+        if self.stream_server.take().is_some() {
+            self.status = "Text service stopped".into();
+            self.job_log.push(&self.status);
+        } else if let Err(error) = self.start_stream_service(crate::stream_service::DEFAULT_PORT) {
+            self.status = format!("Error starting text service: {error:#}");
+            self.job_log.push(&self.status);
+        }
     }
 
     /// The method the configured strategy resolves to for the current
@@ -283,6 +320,7 @@ impl App {
         ) {
             self.job_log.push(format!("diarization {note}"));
         }
+        self.live = LiveState::default();
         self.transcript.begin(
             audio.clone(),
             model.name.clone(),
@@ -331,7 +369,8 @@ impl App {
     pub fn export_log(&mut self) {
         match self.job_log.export_to(&self.output_dir.join("logs")) {
             Ok(path) => {
-                self.job_log.push(format!("log exported: {}", path.display()));
+                self.job_log
+                    .push(format!("log exported: {}", path.display()));
                 self.status = format!("Log exported to {}", path.display());
             }
             Err(e) => self.status = format!("Log export failed: {e}"),
@@ -463,7 +502,10 @@ mod tests {
             "segment [00:00 → 00:01] hi",
             "ERROR: boom",
         ] {
-            assert!(joined.contains(expected), "missing {expected:?} in:\n{joined}");
+            assert!(
+                joined.contains(expected),
+                "missing {expected:?} in:\n{joined}"
+            );
         }
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -536,7 +578,10 @@ mod tests {
         );
         assert!(app.tdrz_prompt.is_some(), "download offer should open");
         // declining leaves the strategy set but downloads nothing
-        app.on_key(crossterm::event::KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        app.on_key(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        );
         assert!(app.tdrz_prompt.is_none());
         assert!(app.hub.download.is_none());
         assert!(app.status.contains("skipped"), "{}", app.status);
@@ -652,6 +697,82 @@ mod tests {
     }
 
     #[test]
+    fn settings_language_picker_saves_cancels_and_renders_on_small_terminals() {
+        use crossterm::event::KeyModifiers;
+        use ratatui::{backend::TestBackend, Terminal};
+        let _guard = lock_env();
+        let dir = tempdir();
+        std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
+        let mut app = test_app(dir.clone());
+        app.on_key(KeyCode::Char('s'), KeyModifiers::NONE);
+        app.on_key(KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(app.settings.selected, SettingsRow::Language);
+
+        for (index, (code, label)) in config::INPUT_LANGUAGES.iter().enumerate() {
+            app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+            for _ in 0..config::INPUT_LANGUAGES.len() {
+                app.on_key(KeyCode::Up, KeyModifiers::NONE);
+            }
+            for _ in 0..index {
+                app.on_key(KeyCode::Down, KeyModifiers::NONE);
+            }
+            for (width, height) in [(100, 30), (80, 16)] {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal.draw(|f| crate::ui::draw(f, &app)).unwrap();
+                let screen = terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|c| c.symbol())
+                    .collect::<String>();
+                for (_, name) in config::INPUT_LANGUAGES {
+                    assert!(screen.contains(name), "missing {name} at {width}x{height}");
+                }
+            }
+            app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+            let expected = if *code == "auto" { None } else { Some(*code) };
+            assert_eq!(app.config.language.as_deref(), expected);
+            assert_eq!(config::load().language.as_deref(), expected);
+            assert!(app.settings.language_cursor.is_none());
+            assert!(app.settings.open);
+            let mut terminal = Terminal::new(TestBackend::new(80, 16)).unwrap();
+            terminal.draw(|f| crate::ui::draw(f, &app)).unwrap();
+            let screen = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>();
+            assert!(screen.contains(&format!("Input language: {label}")));
+            assert!(screen.contains("HF token:"));
+        }
+
+        // Reopening selects the saved choice; moving then cancelling does not save.
+        app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.settings.language_cursor, Some(5));
+        app.on_key(KeyCode::Up, KeyModifiers::NONE);
+        app.on_key(KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(config::load().language.as_deref(), Some("fr"));
+        // Auto clears a previously pinned language, including on disk.
+        app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+        for _ in 0..5 {
+            app.on_key(KeyCode::Up, KeyModifiers::NONE);
+        }
+        app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(config::load().language, None);
+        // Custom codes from the existing shortcut survive opening/cancelling.
+        app.set_language("ja");
+        app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+        app.on_key(KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(config::load().language.as_deref(), Some("ja"));
+        let reopened = test_app(dir.clone());
+        assert_eq!(reopened.config.language.as_deref(), Some("ja"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn language_hotkey_edits_and_persists_the_code() {
         use crossterm::event::KeyModifiers;
         let _guard = lock_env(); // Enter persists the language
@@ -761,12 +882,20 @@ mod tests {
         assert!(app.hub.info.contains("HF token"), "{}", app.hub.info);
 
         // Any other failure keeps the plain error message
-        app.hub.download = Some(fake_download("m2.bin", &dir, Arc::new(AtomicBool::new(false))));
+        app.hub.download = Some(fake_download(
+            "m2.bin",
+            &dir,
+            Arc::new(AtomicBool::new(false)),
+        ));
         app.handle_hub_event(HubEvent::Failed {
             file: "m2.bin".into(),
             error: "connection closed early".into(),
         });
-        assert!(app.hub.info.contains("connection closed early"), "{}", app.hub.info);
+        assert!(
+            app.hub.info.contains("connection closed early"),
+            "{}",
+            app.hub.info
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -815,7 +944,10 @@ mod tests {
         drop(entries);
         app.hub_key(KeyCode::Enter);
         assert_eq!(app.config.diarize, DiarizeStrategy::Tdrz);
-        assert!(app.hub.download.is_none(), "no download for an installed model");
+        assert!(
+            app.hub.download.is_none(),
+            "no download for an installed model"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -868,10 +1000,12 @@ mod tests {
         app.on_key(KeyCode::Esc, KeyModifiers::NONE);
         assert!(app.naming.is_none());
         assert!(app.status.contains("re-exported"), "{}", app.status);
-        let exported: Vec<_> = std::fs::read_dir(dir.join("out")).unwrap().flatten().collect();
+        let exported: Vec<_> = std::fs::read_dir(dir.join("out"))
+            .unwrap()
+            .flatten()
+            .collect();
         assert_eq!(exported.len(), 1);
-        let md =
-            std::fs::read_to_string(exported[0].path().join("call.llm.md")).unwrap();
+        let md = std::fs::read_to_string(exported[0].path().join("call.llm.md")).unwrap();
         assert!(md.contains("George: the long intro"), "{md}");
         assert!(md.contains("Speaker B: reply"), "{md}");
         assert!(md.contains("speakers: Speaker A = George"), "{md}");
@@ -988,6 +1122,206 @@ mod tests {
             .starts_with("clip_"));
         assert!(exported[0].path().join("clip.llm.md").is_file());
         std::fs::remove_dir_all(&app_dir).unwrap();
+    }
+
+    #[test]
+    fn live_transcript_follows_partials_and_exports_on_stop() {
+        use crossterm::event::KeyModifiers;
+        use ratatui::{backend::TestBackend, Terminal};
+        let dir = tempdir();
+        let _guard = lock_env();
+        let mut app = test_app(dir.clone());
+        app.output_dir = dir.join("out");
+        app.live = LiveState {
+            visible: true,
+            active: true,
+            ..Default::default()
+        };
+        app.focus = Focus::Transcript;
+        app.show_log = false;
+        app.transcript
+            .begin("microphone-test".into(), "Qwen".into(), None);
+        app.handle_event(Event::RecordingStarted {
+            device: "Test microphone".into(),
+            mode: "continuous streaming".into(),
+        });
+        for i in 0..50 {
+            app.handle_event(Event::RecordingLevel {
+                rms: 0.05,
+                peak: 0.2,
+                seconds: i as f32,
+            });
+            app.handle_event(Event::Segment(Segment {
+                start_ms: i * 1000,
+                end_ms: (i + 1) * 1000,
+                text: format!("Sentence {i}, a streamed transcription."),
+                speaker: None,
+            }));
+        }
+        let rect = ratatui::layout::Rect::new(0, 0, 120, 30);
+        app.handle_event(Event::LivePartial(Segment {
+            start_ms: 50000,
+            end_ms: 51000,
+            text: "LATEST words appear live".into(),
+            speaker: None,
+        }));
+        crate::ui::clamp_transcript(&mut app, rect);
+        assert!(app.transcript.scroll > 0);
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|f| crate::ui::draw(f, &app)).unwrap();
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>();
+        assert!(screen.contains("LATEST words appear live"));
+        assert!(screen.contains("RECORDING"));
+        app.on_key(KeyCode::PageUp, KeyModifiers::NONE);
+        let paused = app.transcript.scroll;
+        app.handle_event(Event::LivePartial(Segment {
+            start_ms: 50000,
+            end_ms: 52000,
+            text: "LATEST complete words".into(),
+            speaker: None,
+        }));
+        crate::ui::clamp_transcript(&mut app, rect);
+        assert_eq!(app.transcript.scroll, paused);
+        assert!(!app.transcript.follow);
+        app.on_key(KeyCode::Char('G'), KeyModifiers::NONE);
+        crate::ui::clamp_transcript(&mut app, rect);
+        assert!(app.transcript.follow);
+        app.handle_event(Event::Segment(Segment {
+            start_ms: 50000,
+            end_ms: 52000,
+            text: "LATEST complete words".into(),
+            speaker: None,
+        }));
+        assert!(app.transcript.partial.is_none());
+        app.on_key(KeyCode::Char('R'), KeyModifiers::NONE);
+        assert!(app.live.stopping);
+        assert!(app.busy());
+        app.handle_event(Event::RecordingStopped);
+        assert!(!app.live.recording);
+        assert!(
+            app.busy(),
+            "remaining inference must finish before a new job"
+        );
+        app.handle_event(Event::Done {
+            elapsed_secs: 53.0,
+            audio_secs: 52.0,
+            language: Some("es".into()),
+        });
+        assert!(!app.live.active);
+        assert!(!app.busy());
+        assert!(app.status.contains("exported to"), "{}", app.status);
+        let folder = std::fs::read_dir(&app.output_dir)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let text = std::fs::read_to_string(folder.join("microphone-test.txt")).unwrap();
+        assert_eq!(text.matches("LATEST complete words").count(), 1);
+        for (width, height) in [(60, 18), (24, 8), (1, 1)] {
+            let mut small = Terminal::new(TestBackend::new(width, height)).unwrap();
+            crate::ui::clamp_transcript(&mut app, ratatui::layout::Rect::new(0, 0, width, height));
+            small.draw(|f| crate::ui::draw(f, &app)).unwrap();
+        }
+        app.transcriber.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn microphone_picker_selects_bluetooth_without_starting_recording() {
+        use crossterm::event::KeyModifiers;
+        use ratatui::{backend::TestBackend, Terminal};
+        let dir = tempdir();
+        let _guard = lock_env();
+        let mut app = test_app(dir.clone());
+        app.audio_input.open = true;
+        app.audio_input.update_devices(vec![
+            "MacBook Microphone".into(),
+            "Bluetooth Headset".into(),
+        ]);
+        app.on_key(KeyCode::Down, KeyModifiers::NONE);
+        app.on_key(KeyCode::Down, KeyModifiers::NONE);
+        let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        terminal.draw(|f| crate::ui::draw(f, &app)).unwrap();
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>();
+        assert!(screen.contains("Bluetooth Headset"));
+        app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(
+            app.audio_input.selected.as_deref(),
+            Some("Bluetooth Headset")
+        );
+        assert!(!app.audio_input.open);
+        assert!(!app.busy());
+        app.live = LiveState {
+            active: true,
+            recording: true,
+            ..Default::default()
+        };
+        app.work = WorkState::Recording;
+        app.on_key(KeyCode::Char('a'), KeyModifiers::NONE);
+        assert!(
+            !app.audio_input.open,
+            "input selection cannot change during capture"
+        );
+        assert!(app.status.contains("stop recording"));
+        app.handle_event(Event::Cancelled);
+        assert_eq!(
+            app.audio_input.selected.as_deref(),
+            Some("Bluetooth Headset")
+        );
+        app.audio_input.open = true;
+        app.audio_input.cursor = 0;
+        app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(app.audio_input.selected.is_none());
+        app.audio_input.open = true;
+        app.audio_input.cursor = 2;
+        app.on_key(KeyCode::Esc, KeyModifiers::NONE);
+        assert!(
+            app.audio_input.selected.is_none(),
+            "Esc does not select the highlighted input"
+        );
+        app.transcriber.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn live_cancel_and_error_release_busy_state_and_keep_text() {
+        let dir = tempdir();
+        let _guard = lock_env();
+        let mut app = test_app(dir.clone());
+        for terminal in [Event::Cancelled, Event::Error("device disconnected".into())] {
+            app.live = LiveState {
+                active: true,
+                recording: true,
+                ..Default::default()
+            };
+            app.work = WorkState::Recording;
+            app.transcript.partial = Some(Segment {
+                start_ms: 0,
+                end_ms: 1000,
+                text: "kept".into(),
+                speaker: None,
+            });
+            app.handle_event(terminal);
+            assert!(!app.busy());
+            assert!(!app.live.active);
+            assert!(!app.live.recording);
+            assert_eq!(app.transcript.partial.as_ref().unwrap().text, "kept");
+        }
+        app.transcriber.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -1133,7 +1467,11 @@ mod tests {
         std::fs::write(model.join("config.json"), b"{}").unwrap();
         std::fs::write(model.join("model.safetensors"), vec![0u8; 500]).unwrap();
 
-        let mut d = fake_download("parakeet-tdt-0.6b-v3", &dir, Arc::new(AtomicBool::new(false)));
+        let mut d = fake_download(
+            "parakeet-tdt-0.6b-v3",
+            &dir,
+            Arc::new(AtomicBool::new(false)),
+        );
         d.is_dir = true;
         d.remote_file = String::new();
         app.hub.download = Some(d);
@@ -1206,7 +1544,10 @@ mod tests {
         assert_eq!(tiny.name, "ggml-tiny.bin"); // not in the curated list → file name
         assert_eq!(tiny.size, "2 KB");
         // A suggestion that's on disk shows its friendly name, still installed.
-        let large = entries.iter().find(|e| e.file == "ggml-large-v3.bin").unwrap();
+        let large = entries
+            .iter()
+            .find(|e| e.file == "ggml-large-v3.bin")
+            .unwrap();
         assert!(large.installed);
         assert_eq!(large.name, "whisper-large-v3");
         // The two downloaded models precede the two remaining suggestions
@@ -1224,7 +1565,10 @@ mod tests {
         // Enter on a downloaded row selects it as the default model.
         app.hub.selected = 0;
         app.hub_key(KeyCode::Enter);
-        assert_eq!(app.config.default_model.as_deref(), Some(first_file.as_str()));
+        assert_eq!(
+            app.config.default_model.as_deref(),
+            Some(first_file.as_str())
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1287,7 +1631,10 @@ mod tests {
             Some("campplus-zh-en.onnx")
         );
         let entries = app.hub_default_entries();
-        let camp = entries.iter().find(|e| e.file == "campplus-zh-en.onnx").unwrap();
+        let camp = entries
+            .iter()
+            .find(|e| e.file == "campplus-zh-en.onnx")
+            .unwrap();
         assert!(camp.installed && camp.active);
         let titanet = entries
             .iter()
@@ -1365,7 +1712,11 @@ mod tests {
         app.open_hub();
 
         // Progress only updates an already-running download.
-        app.hub.download = Some(fake_download("ggml-x.bin", &dir, Arc::new(AtomicBool::new(false))));
+        app.hub.download = Some(fake_download(
+            "ggml-x.bin",
+            &dir,
+            Arc::new(AtomicBool::new(false)),
+        ));
         app.handle_hub_event(HubEvent::Progress {
             file: "ggml-x.bin".into(),
             got: 5,

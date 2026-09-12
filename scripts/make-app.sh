@@ -62,6 +62,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <string>launcher</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Transcribe microphone audio locally and display a live transcript.</string>
 </dict>
 </plist>
 PLIST

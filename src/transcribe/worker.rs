@@ -12,6 +12,7 @@ use super::{Event, Job, Segment};
 use crate::diarize::{self, DiarizeMethod};
 
 enum WorkerMsg {
+    Live(super::realtime::LiveJob),
     Job(Job),
     /// Drop the resident model context (the user switched models); the
     /// next job loads its model fresh
@@ -22,9 +23,27 @@ pub struct Transcriber {
     jobs: Option<Sender<WorkerMsg>>,
     handle: Option<std::thread::JoinHandle<()>>,
     pub cancel: Arc<AtomicBool>,
+    stop_recording: Arc<AtomicBool>,
+    text_stream: crate::stream_service::TextStream,
+    event_forwarder: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Transcriber {
+    pub fn text_stream(&self) -> crate::stream_service::TextStream {
+        self.text_stream.clone()
+    }
+    pub fn submit_live(&self, job: super::realtime::LiveJob) {
+        self.cancel.store(false, Ordering::SeqCst);
+        self.stop_recording.store(false, Ordering::SeqCst);
+        if let Some(jobs) = &self.jobs {
+            let _ = jobs.send(WorkerMsg::Live(job));
+        }
+    }
+
+    pub fn stop_recording(&self) {
+        self.stop_recording.store(true, Ordering::SeqCst);
+    }
+
     pub fn submit(&self, job: Job) {
         self.cancel.store(false, Ordering::SeqCst);
         if let Some(jobs) = &self.jobs {
@@ -51,6 +70,9 @@ impl Transcriber {
         self.cancel.store(true, Ordering::SeqCst);
         self.jobs = None;
         if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+        if let Some(handle) = self.event_forwarder.take() {
             let _ = handle.join();
         }
     }
@@ -146,9 +168,22 @@ fn run_with_diarize_postpass(
 }
 
 pub fn spawn(events: Sender<Event>) -> Transcriber {
+    let output = events;
+    let (events, event_rx) = channel::<Event>();
+    let text_stream = crate::stream_service::TextStream::new();
+    let publish = text_stream.clone();
+    let event_forwarder = std::thread::spawn(move || {
+        for event in event_rx {
+            // Publish before the TUI receives the event; no render-loop delay.
+            publish.publish(&event);
+            let _ = output.send(event);
+        }
+    });
     let (tx_job, rx_job): (Sender<WorkerMsg>, Receiver<WorkerMsg>) = channel();
     let cancel = Arc::new(AtomicBool::new(false));
     let worker_cancel = cancel.clone();
+    let stop_recording = Arc::new(AtomicBool::new(false));
+    let worker_stop = stop_recording.clone();
 
     let handle = std::thread::spawn(move || {
         // Route whisper.cpp/ggml chatter through `log` so it can't
@@ -162,7 +197,40 @@ pub fn spawn(events: Sender<Event>) -> Transcriber {
 
         while let Ok(msg) = rx_job.recv() {
             match msg {
+                WorkerMsg::Live(job) => {
+                    let _ = events.send(Event::SessionStarted {
+                        source: "microphone".into(),
+                        model: job
+                            .model
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into(),
+                        live: true,
+                    });
+                    backends.unload_all();
+                    if let Err(e) =
+                        super::realtime::run(&job, &events, &worker_cancel, &worker_stop)
+                    {
+                        let _ = events.send(Event::Error(format!("{e:#}")));
+                    }
+                }
                 WorkerMsg::Job(job) => {
+                    let _ = events.send(Event::SessionStarted {
+                        source: job
+                            .audio
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into(),
+                        model: job
+                            .model
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into(),
+                        live: false,
+                    });
                     let engine = backends.for_model(&job.model);
                     let post_pass = matches!(
                         job.diarize,
@@ -192,6 +260,9 @@ pub fn spawn(events: Sender<Event>) -> Transcriber {
         jobs: Some(tx_job),
         handle: Some(handle),
         cancel,
+        stop_recording,
+        text_stream,
+        event_forwarder: Some(event_forwarder),
     }
 }
 
@@ -251,8 +322,13 @@ mod tests {
 
     fn run_postpass(engine: &mut FakeEngine) -> Vec<Event> {
         let (tx, rx) = channel();
-        run_with_diarize_postpass(engine, &embedding_job(), &tx, &Arc::new(AtomicBool::new(false)))
-            .unwrap();
+        run_with_diarize_postpass(
+            engine,
+            &embedding_job(),
+            &tx,
+            &Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
         drop(tx);
         rx.iter().collect()
     }
@@ -288,8 +364,6 @@ mod tests {
             labeled: false,
         });
         assert!(matches!(events.last(), Some(Event::Done { .. })));
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, Event::AudioInfo { .. })));
+        assert!(events.iter().any(|e| matches!(e, Event::AudioInfo { .. })));
     }
 }
