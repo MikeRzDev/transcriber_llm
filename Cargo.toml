@@ -30,5 +30,8 @@ futures-util = { version = "0.3", features = ["sink"] }
 [dev-dependencies]
 tokio-tungstenite = "0.29"
 
+[build-dependencies]
+cc = "1"
+
 [profile.release]
 lto = "thin"

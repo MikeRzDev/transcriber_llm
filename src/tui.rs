@@ -62,6 +62,9 @@ pub fn run(args: Args) -> Result<()> {
             .cloned();
         }
     }
+    if let Some(mode) = args.noise_suppression {
+        app.config.noise_suppression = mode;
+    }
     if let Some(language) = args.language {
         app.config.language = Some(language);
     }

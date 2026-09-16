@@ -256,6 +256,7 @@ fn worker_publishes_without_waiting_for_tui_event_consumption() {
         model: "/nonexistent/test.bin".into(),
         language: None,
         input_device: None,
+        noise_suppression: Default::default(),
     });
     worker.shutdown();
     let snapshot = hub.snapshot();

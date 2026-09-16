@@ -31,6 +31,10 @@ pub struct Args {
     #[arg(long, value_name = "NAME", conflicts_with_all = ["headless", "download_test_model"])]
     pub input_device: Option<String>,
 
+    /// Microphone noise suppression for this session (default: saved setting or off)
+    #[arg(long, value_enum, value_name = "MODE", conflicts_with_all = ["headless", "download_test_model", "list_input_devices"])]
+    pub noise_suppression: Option<crate::audio::noise::NoiseSuppression>,
+
     /// List available microphone names and exit without recording
     #[arg(long)]
     pub list_input_devices: bool,
@@ -72,6 +76,28 @@ pub struct Args {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn microphone_noise_mode_is_validated() {
+        use crate::audio::noise::NoiseSuppression;
+        assert_eq!(
+            Args::try_parse_from(["transcribe-stt", "--noise-suppression=off"])
+                .unwrap()
+                .noise_suppression,
+            Some(NoiseSuppression::Off)
+        );
+        assert_eq!(
+            Args::try_parse_from(["transcribe-stt", "--realtime", "--noise-suppression=mild"])
+                .unwrap()
+                .noise_suppression,
+            Some(NoiseSuppression::Mild)
+        );
+        assert!(Args::try_parse_from(["transcribe-stt", "--noise-suppression=unknown"]).is_err());
+        assert!(
+            Args::try_parse_from(["transcribe-stt", "--headless", "--noise-suppression=mild"])
+                .is_err()
+        );
+    }
+
     #[test]
     fn text_service_is_opt_in_and_accepts_an_optional_port() {
         assert!(Args::try_parse_from(["transcribe-stt"])

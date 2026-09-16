@@ -126,6 +126,7 @@ impl App {
             model: model.path,
             language: self.config.language.clone(),
             input_device: self.audio_input.selected.clone(),
+            noise_suppression: self.config.noise_suppression,
         });
     }
 

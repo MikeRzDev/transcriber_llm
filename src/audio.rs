@@ -1,5 +1,6 @@
 use std::fs::File;
 pub mod capture;
+pub mod noise;
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};

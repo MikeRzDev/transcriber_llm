@@ -22,10 +22,11 @@ pub enum SettingsRow {
     ModelManagement,
     SplitMode,
     HfToken,
+    NoiseSuppression,
 }
 
 impl SettingsRow {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::DefaultModel,
         Self::Language,
         Self::ModelsFolder,
@@ -34,6 +35,7 @@ impl SettingsRow {
         Self::ModelManagement,
         Self::SplitMode,
         Self::HfToken,
+        Self::NoiseSuppression,
     ];
 
     pub fn next(self) -> Self {
@@ -256,6 +258,17 @@ impl App {
                 SettingsRow::ModelManagement => {
                     self.settings.open = false;
                     self.open_hub();
+                }
+                SettingsRow::NoiseSuppression => {
+                    self.config.noise_suppression = self.config.noise_suppression.next();
+                    self.status = format!(
+                        "Mic noise filter: {} — applies to the next recording",
+                        self.config.noise_suppression.label()
+                    );
+                    if let Err(error) = config::save(&self.config) {
+                        self.status
+                            .push_str(&format!("; saving settings failed: {error}"));
+                    }
                 }
                 SettingsRow::SplitMode => self.cycle_split_mode(),
                 SettingsRow::HfToken => {

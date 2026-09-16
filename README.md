@@ -70,6 +70,23 @@ Supported video (audio track is ripped automatically via ffmpeg, with a live pro
 
 ### Live microphone transcription
 
+Microphone noise cleanup is a separate module in `src/audio/noise.rs`, **Off**
+by default. When enabled in **Mild** mode, it applies an 80 Hz high-pass filter and bundled
+SpeexDSP adaptive noise suppression (up to 12 dB) on the CPU after 16 kHz
+resampling. No model downloads or system Speex installation are needed.
+Use **Settings → Mic noise filter** to switch between Mild and Off for the next
+recording, or override it for one launch with `--noise-suppression=off` /
+`--noise-suppression=mild`. The saved config key is `noise_suppression = "off"`
+or `"mild"`.
+
+Both live transcription paths filter normal packets, queued audio and the final
+tail. Processing uses 20 ms frames, with 20 ms overlap delay and less than 20 ms
+of frame buffering; padding and initial delay are removed so recording duration
+and timestamps are preserved. The input meter still shows the raw microphone.
+File transcription is unaffected. This targets steady background noise such as
+fans and hiss; it does not isolate a speaker from other voices or cancel echo.
+Compare transcript accuracy with Off on your recordings before choosing a mode.
+
 Press **Shift-R** (`R`) to start recording with the selected MLX speech model, or launch directly:
 
 ```sh

@@ -107,6 +107,14 @@ pub(super) fn draw_settings(frame: &mut Frame, app: &App) {
         hf_token_line,
         Line::raw(""),
         Line::from(Span::styled(
+            format!(
+                "  Mic noise filter: {}",
+                app.config.noise_suppression.label()
+            ),
+            row_style(SettingsRow::NoiseSuppression),
+        )),
+        Line::raw(""),
+        Line::from(Span::styled(
             if app.settings.hf_token_input.is_some() {
                 "  Paste your hf.co token (Enter saves, empty clears) — used for gated models"
             } else {

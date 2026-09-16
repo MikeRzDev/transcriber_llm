@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::audio::noise::NoiseSuppression;
 use crate::diarize::{DiarizeModelChoice, DiarizeStrategy};
 use crate::export::ExportFormat;
 use crate::split::SplitMode;
@@ -43,6 +44,8 @@ pub struct Config {
     pub diarize_speakers: Option<u8>,
     /// Input language for all transcription backends that support it; None = auto-detect.
     pub language: Option<String>,
+    /// Microphone cleanup applied to the next live session.
+    pub noise_suppression: NoiseSuppression,
     /// Hugging Face access token for gated models (pyannote community-1)
     /// and authenticated hub downloads; None = rely on the environment /
     /// `hf auth login`
@@ -63,6 +66,7 @@ impl Default for Config {
             diarize_models: DiarizeModelChoice::default(),
             diarize_speakers: None,
             language: None,
+            noise_suppression: NoiseSuppression::default(),
             hf_token: None,
             split_mode: SplitMode::default(),
             export_formats: ExportFormat::ALL.to_vec(),
@@ -178,6 +182,8 @@ struct ConfigToml {
     #[serde(skip_serializing_if = "Option::is_none")]
     language: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    noise_suppression: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     hf_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     export_formats: Option<String>,
@@ -206,6 +212,11 @@ impl ConfigToml {
             },
             diarize_speakers: self.diarize_speakers.filter(|n| *n > 0),
             language: non_empty(self.language).filter(|lang| lang != "auto"),
+            noise_suppression: self
+                .noise_suppression
+                .as_deref()
+                .and_then(NoiseSuppression::parse)
+                .unwrap_or_default(),
             hf_token: non_empty(self.hf_token),
             split_mode: non_empty(self.split_mode)
                 .and_then(|mode| SplitMode::parse(&mode))
@@ -232,6 +243,8 @@ impl ConfigToml {
             split_mode: (config.split_mode != SplitMode::Auto)
                 .then(|| config.split_mode.as_str().to_string()),
             language: config.language.clone(),
+            noise_suppression: (config.noise_suppression != NoiseSuppression::default())
+                .then(|| config.noise_suppression.key().to_string()),
             hf_token: config.hf_token.clone(),
             export_formats: (config.export_formats != ExportFormat::ALL)
                 .then(|| render_formats(&config.export_formats)),
@@ -285,6 +298,9 @@ fn parse_lenient(contents: &str) -> Config {
                 }
             }
             "language" if value != "auto" => config.language = Some(value.to_string()),
+            "noise_suppression" => {
+                config.noise_suppression = NoiseSuppression::parse(value).unwrap_or_default()
+            }
             "hf_token" => config.hf_token = Some(value.to_string()),
             "export_formats" => config.export_formats = parse_formats(value),
             _ => {}
@@ -347,6 +363,7 @@ mod tests {
             },
             diarize_speakers: Some(3),
             language: Some("es".into()),
+            noise_suppression: NoiseSuppression::Mild,
             hf_token: Some("hf_abc123".into()),
             split_mode: SplitMode::Silence,
             export_formats: vec![ExportFormat::LlmMd, ExportFormat::Srt],
@@ -427,5 +444,18 @@ mod tests {
     #[test]
     fn empty_config_renders_header_only() {
         assert_eq!(render(&Config::default()), "# transcribe-stt settings\n");
+    }
+
+    #[test]
+    fn noise_mode_defaults_and_legacy_config_are_supported() {
+        assert_eq!(parse_str("").noise_suppression, NoiseSuppression::Off);
+        assert_eq!(
+            parse_str("noise_suppression = off").noise_suppression,
+            NoiseSuppression::Off
+        );
+        assert_eq!(
+            parse_str("noise_suppression = \"invalid\"").noise_suppression,
+            NoiseSuppression::Off
+        );
     }
 }

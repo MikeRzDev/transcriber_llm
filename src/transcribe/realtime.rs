@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use super::{Event, Segment};
 use crate::audio::capture::{levels, Capture, Resample16k};
+use crate::audio::noise::{NoiseFilter, NoiseSuppression};
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 
@@ -18,6 +19,7 @@ pub struct LiveJob {
     pub model: PathBuf,
     pub language: Option<String>,
     pub input_device: Option<String>,
+    pub noise_suppression: NoiseSuppression,
 }
 
 /// Reject incompatible conversions before loading weights or opening the mic.
@@ -109,9 +111,34 @@ impl InferenceSpeed {
     }
 }
 
+/// One stateful path for normal packets, queued catch-up and the final tail.
+struct LiveAudio {
+    resampler: Resample16k,
+    filter: NoiseFilter,
+}
+
+impl LiveAudio {
+    fn new(rate: u32, mode: NoiseSuppression) -> Result<Self> {
+        Ok(Self {
+            resampler: Resample16k::new(rate)?,
+            filter: NoiseFilter::new(mode)?,
+        })
+    }
+
+    fn push(&mut self, input: &[f32]) -> Result<Vec<f32>> {
+        Ok(self.filter.push(&self.resampler.push(input)?))
+    }
+
+    fn finish(&mut self) -> Result<Vec<f32>> {
+        let mut output = self.filter.push(&self.resampler.finish()?);
+        output.extend(self.filter.finish());
+        Ok(output)
+    }
+}
+
 fn catch_up_audio(
     mut packets: impl Iterator<Item = Vec<f32>>,
-    resampler: &mut Resample16k,
+    processor: &mut LiveAudio,
     audio: &mut Vec<f32>,
     max_samples: usize,
 ) -> Result<()> {
@@ -119,7 +146,7 @@ fn catch_up_audio(
     // one 100 ms packet so each native request stays at or below four seconds.
     while audio.len() + 1600 <= max_samples {
         let Some(input) = packets.next() else { break };
-        audio.extend(resampler.push(&input)?);
+        audio.extend(processor.push(&input)?);
     }
     Ok(())
 }
@@ -462,9 +489,13 @@ fn run_with_capture(
     };
     let _ = events.send(Event::RecordingStarted {
         device: capture.device.clone(),
-        mode,
+        mode: format!("{mode} · noise {}", job.noise_suppression.key()),
     });
-    let mut resampler = Resample16k::new(capture.sample_rate)?;
+    let mut processor = LiveAudio::new(capture.sample_rate, job.noise_suppression)?;
+    let _ = events.send(Event::EngineLog(format!(
+        "Microphone noise filter: {}",
+        job.noise_suppression.label()
+    )));
     let mut window = SpeechWindow::default();
     let mut count = 0usize;
     let mut native_audio = Vec::new();
@@ -478,7 +509,7 @@ fn run_with_capture(
             match capture.packets.recv_timeout(Duration::from_millis(50)) {
                 Ok(input) => {
                     last_input = Instant::now();
-                    let audio = resampler.push(&input)?;
+                    let audio = processor.push(&input)?;
                     count += audio.len();
                     if runner.native {
                         native_audio.extend(audio);
@@ -489,7 +520,7 @@ fn run_with_capture(
                         let before = native_audio.len();
                         catch_up_audio(
                             std::iter::from_fn(|| capture.packets.try_recv().ok()),
-                            &mut resampler,
+                            &mut processor,
                             &mut native_audio,
                             runner
                                 .feed_samples
@@ -534,7 +565,7 @@ fn run_with_capture(
             }
         }
         capture.check_error()?;
-        let tail = resampler.finish()?;
+        let tail = processor.finish()?;
         count += tail.len();
         if runner.native {
             native_audio.extend(tail);
@@ -616,6 +647,7 @@ mod tests {
                 model,
                 language: Some("es".into()),
                 input_device: None,
+                noise_suppression: NoiseSuppression::Off,
             };
             run_with_capture(&job, &tx, &worker_cancel, &worker_stop, || {
                 let (packets_tx, packets_rx) = sync_channel(1200);
@@ -761,8 +793,8 @@ mod tests {
     #[test]
     fn low_latency_feed_sends_the_first_short_resampled_packet_immediately() {
         for rate in [16000, 48000] {
-            let mut resampler = Resample16k::new(rate).unwrap();
-            let audio = resampler.push(&vec![0.1; rate as usize / 10]).unwrap();
+            let mut processor = LiveAudio::new(rate, NoiseSuppression::Mild).unwrap();
+            let audio = processor.push(&vec![0.1; rate as usize / 10]).unwrap();
             assert!(!audio.is_empty());
             assert!(audio.len() < 1600);
             assert_eq!(native_send_len(audio.len(), Some(1600)), Some(audio.len()));
@@ -774,20 +806,51 @@ mod tests {
     #[test]
     fn catch_up_batches_preserve_audio_and_bound_each_request() {
         let mut packets = (0..100).map(|_| vec![0.1; 1600]).peekable();
-        let mut resampler = Resample16k::new(16000).unwrap();
+        let mut processor = LiveAudio::new(16000, NoiseSuppression::Off).unwrap();
         let mut total = 0;
         let mut requests = 0;
         while packets.peek().is_some() {
             let mut audio = Vec::new();
-            catch_up_audio(&mut packets, &mut resampler, &mut audio, 64000).unwrap();
+            catch_up_audio(&mut packets, &mut processor, &mut audio, 64000).unwrap();
             assert!(!audio.is_empty());
             assert!(audio.len() <= 64000);
             total += audio.len();
             requests += 1;
         }
-        total += resampler.finish().unwrap().len();
+        total += processor.finish().unwrap().len();
         assert_eq!(total, 160000);
         assert_eq!(requests, 3);
+    }
+
+    #[test]
+    fn filtered_catch_up_matches_normal_feed_including_resampler_tail() {
+        for rate in [8000, 16000, 44100, 48000] {
+            let input: Vec<_> = (0..rate * 5 + 137)
+                .map(|i| (i as f32 * 0.07).sin() * 0.1)
+                .collect();
+            let packets: Vec<_> = input.chunks(rate / 10).map(|s| s.to_vec()).collect();
+            let mut normal = LiveAudio::new(rate as u32, NoiseSuppression::Mild).unwrap();
+            let mut expected = Vec::new();
+            for packet in &packets {
+                expected.extend(normal.push(packet).unwrap());
+            }
+            expected.extend(normal.finish().unwrap());
+            let mut queued = LiveAudio::new(rate as u32, NoiseSuppression::Mild).unwrap();
+            let mut packets = packets.into_iter().peekable();
+            let mut actual = Vec::new();
+            while packets.peek().is_some() {
+                let mut batch = Vec::new();
+                catch_up_audio(&mut packets, &mut queued, &mut batch, 64000).unwrap();
+                assert!(batch.len() <= 64000);
+                actual.extend(batch);
+            }
+            actual.extend(queued.finish().unwrap());
+            assert_eq!(actual, expected);
+            assert_eq!(
+                actual.len(),
+                (input.len() as f64 * 16000.0 / rate as f64).round() as usize
+            );
+        }
     }
 
     #[test]
