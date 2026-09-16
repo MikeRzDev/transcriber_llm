@@ -42,15 +42,26 @@ impl App {
                     self.status = "Microphone stopped — finishing remaining speech…".into();
                 }
             }
+            Event::LiveSpeechStarted { at } => {
+                self.live.pending_speech_started = Some(at);
+                self.live.first_text_pending_render = None;
+                self.live.first_text_ms = None;
+            }
             Event::LivePartial(segment) => {
+                if segment.text.chars().any(char::is_alphanumeric) {
+                    if let Some(at) = self.live.pending_speech_started.take() {
+                        self.live.first_text_pending_render = Some(at);
+                    }
+                }
                 self.transcript.partial = if segment.text.is_empty() {
                     None
                 } else {
                     Some(segment)
                 };
             }
-            Event::LiveProgress { seconds, rtf } => {
+            Event::LiveProgress { seconds, rtf, idle } => {
                 self.live.decoded_seconds = seconds;
+                self.live.inference_idle = idle;
                 if let Some(rtf) = rtf {
                     self.live.inference_rtf = Some(rtf);
                     self.job_log.push_tagged("live-speed", &format!(
@@ -161,6 +172,7 @@ impl App {
                     segments.len()
                 ));
                 self.transcript.segments = segments;
+                self.transcript.invalidate_layout();
             }
             Event::Done {
                 elapsed_secs,

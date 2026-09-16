@@ -84,6 +84,25 @@ for line in sys.stdin:
         with self.assertRaises(IndexError):
             _ = audio[len(audio)]
 
+    def test_preempted_benchmark_saves_partial_measurements_and_is_not_recommended(self):
+        with tempfile.TemporaryDirectory() as root:
+            bridge = Path(root) / "fake.py"
+            bridge.write_text("""import json, sys
+print(json.dumps({"type": "ready", "native": False}), flush=True)
+for index, line in enumerate(sys.stdin):
+    if index == 0:
+        print(json.dumps({"type": "ack"}), flush=True)
+    else:
+        print(json.dumps({"type": "error", "message": "Benchmark stopped: interactive live transcription has GPU priority"}), flush=True)
+        break
+""")
+            with patch.object(bench, "BRIDGE", bridge):
+                result = bench.trial(Path("fake-model"), [0.1] * 128000, "es", 0.5, 5)
+            self.assertEqual(result["status"], "interrupted")
+            self.assertEqual(result["audio_seconds"], 4)
+            self.assertEqual(len(result["chunks"]), 1)
+            self.assertIsNone(bench.recommend([result]))
+
     def test_empty_transcript_cannot_be_recommended(self):
         self.assertIsNone(bench.recommend([{"status": "ok", "segments": []}]))
 

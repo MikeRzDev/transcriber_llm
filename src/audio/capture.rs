@@ -7,7 +7,7 @@ use std::sync::mpsc::{
     TrySendError,
 };
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -102,6 +102,7 @@ fn resolve_input(requested: Option<&str>) -> Result<cpal::Device> {
 pub struct Capture {
     pub packets: AudioPackets,
     pub sample_rate: u32,
+    pub started_at: Instant,
     pub device: String,
     error: Arc<Mutex<Option<String>>>,
     stop: Arc<AtomicBool>,
@@ -109,6 +110,28 @@ pub struct Capture {
 }
 
 impl Capture {
+    #[cfg(test)]
+    pub(crate) fn scripted(
+        receiver: Receiver<Vec<f32>>,
+        sample_rate: u32,
+        started_at: Instant,
+        stop: Arc<AtomicBool>,
+        handle: std::thread::JoinHandle<()>,
+    ) -> Self {
+        Self {
+            packets: AudioPackets {
+                receiver,
+                overflow: Arc::new(Mutex::new(None)),
+            },
+            sample_rate,
+            started_at,
+            device: "paced test fixture (48 kHz)".into(),
+            error: Arc::new(Mutex::new(None)),
+            stop,
+            handle: Some(handle),
+        }
+    }
+
     pub fn open(
         events: Sender<Event>,
         cancel: Arc<AtomicBool>,
@@ -156,8 +179,9 @@ impl Capture {
                     cpal::SampleFormat::F64 => build::<f64>(&device, &config, args, on_error),
                     format => bail!("Unsupported microphone sample format: {format}"),
                 }.context("Cannot start microphone. Check your terminal's Microphone permission in macOS Privacy & Security")?;
+                let started_at = Instant::now();
                 stream.play()?;
-                let _ = ready_tx.send(Ok((config.sample_rate.0, name)));
+                let _ = ready_tx.send(Ok((config.sample_rate.0, name, started_at)));
                 while !worker_stop.load(Ordering::Relaxed)
                     && !cancel.load(Ordering::Relaxed)
                     && worker_error.lock().unwrap().is_none()
@@ -177,14 +201,16 @@ impl Capture {
         let mut capture = Self {
             packets,
             sample_rate: 0,
+            started_at: Instant::now(),
             device: String::new(),
             error,
             stop,
             handle: Some(handle),
         };
         match ready_rx.recv().context("Microphone setup thread stopped")? {
-            Ok((rate, device)) => {
+            Ok((rate, device, started_at)) => {
                 capture.sample_rate = rate;
+                capture.started_at = started_at;
                 capture.device = device;
                 Ok(capture)
             }

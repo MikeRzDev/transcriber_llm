@@ -1125,6 +1125,33 @@ mod tests {
     }
 
     #[test]
+    fn rendered_text_over_budget_is_reported_without_hiding_the_text() {
+        use ratatui::{backend::TestBackend, Terminal};
+        let _guard = lock_env();
+        let dir = tempdir();
+        let mut app = test_app(dir.clone());
+        app.live = LiveState { visible: true, active: true, recording: true, ..Default::default() };
+        app.show_log = false;
+        app.handle_event(Event::LiveSpeechStarted {
+            at: std::time::Instant::now() - Duration::from_millis(950),
+        });
+        app.handle_event(Event::LivePartial(Segment {
+            start_ms: 0, end_ms: 1000, text: "Visible speech".into(), speaker: None,
+        }));
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        crate::ui::clamp_transcript(&mut app, ratatui::layout::Rect::new(0, 0, 120, 40));
+        terminal.draw(|frame| crate::ui::draw(frame, &app)).unwrap();
+        assert!(app.live_text_rendered());
+        terminal.draw(|frame| crate::ui::draw(frame, &app)).unwrap();
+        let screen = terminal.backend().buffer().content.iter().map(|c| c.symbol()).collect::<String>();
+        assert!(screen.contains("Visible speech"));
+        assert!(screen.contains("> 0.9s"));
+        assert!(app.job_log.lines.iter().any(|s| s.contains("target exceeded")));
+        app.transcriber.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn model_picker_shows_live_fit_without_blocking_selection() {
         use crate::live_benchmark::LiveFit;
         use crossterm::event::KeyModifiers;
@@ -1195,6 +1222,9 @@ mod tests {
             }));
         }
         let rect = ratatui::layout::Rect::new(0, 0, 120, 30);
+        app.handle_event(Event::LiveSpeechStarted {
+            at: std::time::Instant::now() - Duration::from_millis(250),
+        });
         app.handle_event(Event::LivePartial(Segment {
             start_ms: 50000,
             end_ms: 51000,
@@ -1206,6 +1236,7 @@ mod tests {
         app.handle_event(Event::LiveProgress {
             seconds: 45.0,
             rtf: Some(1.5),
+            idle: false,
         });
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         terminal.draw(|f| crate::ui::draw(f, &app)).unwrap();
@@ -1218,13 +1249,26 @@ mod tests {
             .collect::<String>();
         assert!(screen.contains("LATEST words appear live"));
         assert!(screen.contains("RECORDING"));
+        assert!(screen.contains("First text:"));
+        assert!(app.live.first_text_ms.is_none(), "receive time is not render time");
+        app.show_log = true;
+        assert!(!app.live_text_rendered(), "hidden text must not count as rendered");
+        app.show_log = false;
+        assert!(app.live_text_rendered());
+        assert!(app.live.first_text_ms.unwrap() >= 250.0);
+        assert!(app.live.pending_speech_started.is_none());
         assert!(screen.contains("1.50s/audio s"));
         assert!(screen.contains("falling behind"));
         app.handle_event(Event::LiveProgress {
             seconds: 46.0,
             rtf: None,
+            idle: true,
         });
         assert_eq!(app.live.inference_rtf, Some(1.5));
+        assert!(app.live.inference_idle);
+        terminal.draw(|f| crate::ui::draw(f, &app)).unwrap();
+        let idle_screen = terminal.backend().buffer().content.iter().map(|c| c.symbol()).collect::<String>();
+        assert!(idle_screen.contains("Waiting for speech"));
         app.on_key(KeyCode::PageUp, KeyModifiers::NONE);
         let paused = app.transcript.scroll;
         app.handle_event(Event::LivePartial(Segment {

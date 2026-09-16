@@ -1,0 +1,18 @@
+{
+  "notes": "CPU-only: cached timing includes changing the partial, layout preparation, scrolling and cloning visible lines. Full terminal/GPU latency is not measured here. Width/name changes reflow history once.",
+  "rows": [
+    {
+      "cached_partial_update_and_viewport_ms": 0.00707459,
+      "full_history_wrap_ms": 0.414542,
+      "history_segments": 100,
+      "wrapped_history_segments": 100
+    },
+    {
+      "cached_partial_update_and_viewport_ms": 0.00392583,
+      "full_history_wrap_ms": 31.396334,
+      "history_segments": 10000,
+      "wrapped_history_segments": 10000
+    }
+  ],
+  "test": "steady-state transcript layout cost"
+}

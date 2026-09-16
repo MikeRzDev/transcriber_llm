@@ -1,7 +1,7 @@
 //! Terminal lifecycle and the render/event loop.
 
 use std::sync::mpsc::channel;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 use crossterm::event::{
@@ -81,21 +81,31 @@ pub fn run(args: Args) -> Result<()> {
     let mut drops = DropDetector::new();
 
     let result = (|| -> Result<()> {
+        let mut redraw = true;
+        let mut last_draw = Instant::now();
         loop {
-            app.stats.refresh_if_due();
-            app.tick = app.tick.wrapping_add(1);
-            let size = terminal.size()?;
-            let screen = ratatui::layout::Rect::new(0, 0, size.width, size.height);
-            ui::clamp_transcript(&mut app, screen);
-            ui::clamp_log(&mut app, screen);
-            terminal.draw(|frame| ui::draw(frame, &app))?;
-
+            // Apply streamed text before drawing it; the old ordering added
+            // another whole polling interval before text became visible.
             while let Ok(event) = rx.try_recv() {
                 app.handle_event(event);
+                redraw = true;
             }
             app.hub_pump();
-
-            if event::poll(Duration::from_millis(100))? {
+            if redraw || last_draw.elapsed() >= Duration::from_millis(100) {
+                app.tick = app.tick.wrapping_add(1);
+                let size = terminal.size()?;
+                let screen = ratatui::layout::Rect::new(0, 0, size.width, size.height);
+                ui::clamp_transcript(&mut app, screen);
+                ui::clamp_log(&mut app, screen);
+                terminal.draw(|frame| ui::draw(frame, &app))?;
+                redraw = app.live_text_rendered();
+                last_draw = Instant::now();
+            }
+            // Resource sampling must not sit between a text update and its draw.
+            app.stats.refresh_if_due();
+            let poll_ms = if app.live.active { 20 } else { 100 };
+            if event::poll(Duration::from_millis(poll_ms))? {
+                redraw = true;
                 match event::read()? {
                     TermEvent::Key(key) if key.kind == KeyEventKind::Press => {
                         let mut consumed = false;
@@ -126,6 +136,7 @@ pub fn run(args: Args) -> Result<()> {
 
             if let Some(text) = drops.poll() {
                 app.handle_dropped_text(&text);
+                redraw = true;
             }
 
             if app.should_quit {

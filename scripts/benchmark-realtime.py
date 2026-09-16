@@ -124,11 +124,14 @@ def trial(model, samples, language, batch, timeout, paced=False, diagnostics=Fal
     child = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True,
                              env={**os.environ, "HF_HUB_OFFLINE": "1", "TOKENIZERS_PARALLELISM": "false",
-                                  "TRANSCRIBE_STT_LIVE_METRICS": "1" if diagnostics else "0"})
+                                  "TRANSCRIBE_STT_LIVE_METRICS": "1" if diagnostics else "0",
+                                  "TRANSCRIBE_STT_BENCHMARK": "1"})
     def read_stdout():
         try:
             for line in child.stdout:
-                messages.put(json.loads(line))
+                item = json.loads(line)
+                item["_received_at"] = time.perf_counter()
+                messages.put(item)
         except Exception as error:
             messages.put({"type": "error", "message": str(error)})
         finally:
@@ -140,6 +143,7 @@ def trial(model, samples, language, batch, timeout, paced=False, diagnostics=Fal
     for thread in threads:
         thread.start()
     segments = []
+    partials = []
     last_ack = {}
     def wait(kind):
         deadline = time.monotonic() + timeout
@@ -152,6 +156,8 @@ def trial(model, samples, language, batch, timeout, paced=False, diagnostics=Fal
                 raise RuntimeError(item["message"])
             if item["type"] == "segment":
                 segments.append(item["text"])
+            if item["type"] == "partial" and any(c.isalnum() for c in item.get("text", "")):
+                partials.append({"text": item["text"], "received_at": item["_received_at"]})
             if item["type"] == kind:
                 return item
             if time.monotonic() >= deadline:
@@ -163,6 +169,7 @@ def trial(model, samples, language, batch, timeout, paced=False, diagnostics=Fal
         child.stdin.flush()
         last_ack = wait("ack")
         return time.perf_counter() - started
+    chunks = []
     try:
         ready = wait("ready")
         load_seconds = time.perf_counter() - started
@@ -179,7 +186,7 @@ def trial(model, samples, language, batch, timeout, paced=False, diagnostics=Fal
                 wait_for_audio(capture_started, end)
             elapsed = request({"samples": chunk, "start": start, "end": end})
             chunks.append({"start": start, "end": end, "elapsed": elapsed,
-                           **{k: last_ack[k] for k in ("session_seconds", "closed_sessions", "active_gpu_bytes", "cached_gpu_bytes") if k in last_ack}})
+                           **{k: last_ack[k] for k in ("session_seconds", "closed_sessions", "active_gpu_bytes", "cached_gpu_bytes", "idle", "inference_active", "inference_seconds") if k in last_ack}})
             if paced:
                 chunks[-1]["queue_after_ack_seconds"] = max(0.0, min(time.perf_counter() - capture_started, len(samples) / 16000) - end)
             if progress is not None and end >= next_progress:
@@ -188,7 +195,7 @@ def trial(model, samples, language, batch, timeout, paced=False, diagnostics=Fal
                             "wall_seconds": time.perf_counter() - capture_started,
                             "last_minute_rtf": sum(c["elapsed"] for c in recent) / sum(c["end"] - c["start"] for c in recent),
                             "peak_queue_seconds": max(c.get("queue_after_ack_seconds", 0.0) for c in chunks),
-                            **{k: last_ack[k] for k in ("session_seconds", "closed_sessions", "active_gpu_bytes", "cached_gpu_bytes") if k in last_ack}}
+                            **{k: last_ack[k] for k in ("session_seconds", "closed_sessions", "active_gpu_bytes", "cached_gpu_bytes", "idle", "inference_active", "inference_seconds") if k in last_ack}}
                 progress(snapshot)
                 next_progress = end + 60
         end = len(samples) / 16000
@@ -202,12 +209,19 @@ def trial(model, samples, language, batch, timeout, paced=False, diagnostics=Fal
                 "observed_peak_queue_seconds": max((c.get("queue_after_ack_seconds", 0.0) for c in chunks), default=0.0) if paced else None,
                 "session_limit_seconds": ready.get("session_limit_seconds"),
                 "optimization": ready.get("optimization"),
+                "transcription_delay_ms": ready.get("transcription_delay_ms"),
+                "runtime": ready.get("runtime"),
                 "closed_sessions": last_ack.get("closed_sessions"),
                 **summarize(chunks, finish),
                 "segments": segments, "chunks": chunks,
+                "partials": [{"text": p["text"], "received_seconds": p["received_at"] - capture_started} for p in partials],
                 "warning": None if segments else "No transcript produced; throughput alone does not establish usability"}
-    except Exception as error:
-        return {"status": "error", "batch_seconds": batch, "error": str(error), "stderr_tail": list(errors)}
+    except (Exception, KeyboardInterrupt) as error:
+        interrupted = isinstance(error, KeyboardInterrupt) or "interactive live transcription has GPU priority" in str(error)
+        return {"status": "interrupted" if interrupted else "error", "batch_seconds": batch,
+                "error": "Benchmark interrupted" if isinstance(error, KeyboardInterrupt) else str(error),
+                "stderr_tail": list(errors), "chunks": chunks,
+                "audio_seconds": chunks[-1]["end"] if chunks else 0.0}
     finally:
         if child.poll() is None:
             child.kill()
@@ -254,7 +268,7 @@ def write_report(report, output):
             result = "Keeps up with 20% headroom" if best["keeps_up_with_headroom"] else "No tested feed has 20% headroom"
             rows.append(f"| {model['model']} | {best['batch_seconds']:g}s | {best['median_sustained_rtf']:.3f} | {best['max_observed_queue_seconds']:.2f}s | {result} |")
         else:
-            reason = model.get("reason") or next((t["error"] for t in model.get("trials", []) if t["status"] == "error"), "Running / no usable transcript")
+            reason = model.get("reason") or next((t["error"] for t in model.get("trials", []) if t["status"] != "ok"), "Running / no usable transcript")
             rows.append(f"| {model['model']} | — | — | — | {reason.replace('|', '/').replace(chr(10), ' ')} |")
     rows += ["", "These are measurements for this machine, clip, and workload, not exact per-model constants or an accuracy evaluation. A sustained RTF above 1 cannot be fixed with any finite buffer. An observed buffer allowance in JSON is only a 25% margin over this clip's peak plus one second. Longer recordings, noise, contention, and thermal changes need separate testing.", "", "## Trials", "", "| Model | Feed | Load | First request | Sustained RTF | Total RTF incl. flush | Peak queue |", "|---|---:|---:|---:|---:|---:|---:|"]
     for model in report["models"]:
@@ -363,7 +377,7 @@ def main():
                     item["sweep_note"] = f"Additional feed sizes not tested: every baseline run exceeded {args.max_sweep_rtf:g} RTF. Use --max-sweep-rtf 0 --resume for a full sweep."
                     print(f"  {item['sweep_note']}", flush=True)
                     break
-                existing = [t for t in item["trials"] if t["batch_seconds"] == batch or (t["status"] == "ok" and not t["native"])]
+                existing = [t for t in item["trials"] if t["status"] == "ok" and (t["batch_seconds"] == batch or not t["native"])]
                 for repeat in range(args.repeats):
                     if repeat < len(existing):
                         result = existing[repeat]
@@ -377,6 +391,11 @@ def main():
                     result = trial(model, samples, args.language, batch, args.timeout,
                                    paced=args.paced, diagnostics=args.diagnostics, progress=progress)
                     item["trials"].append(result)
+                    if result["status"] == "interrupted":
+                        item["reason"] = result["error"]
+                        write_report(report, args.output)
+                        print(f"STOPPED: {result['error']}; partial measurements saved to {args.output}", flush=True)
+                        return
                     item["recommendation"] = recommend(item["trials"])
                     write_report(report, args.output)
                     if result["status"] == "ok":

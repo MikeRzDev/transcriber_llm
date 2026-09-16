@@ -5,12 +5,51 @@ Voxtral's continuous session API is used when available. Other mlx-audio
 versions/models receive short speech windows and stream their text deltas.
 """
 import contextlib
+from collections import deque
 import inspect
 import json
 import os
 import re
 import sys
 import time
+
+
+class LivePriority:
+    """Interactive transcription takes priority over our background benchmarks.
+
+    Live sessions hold a shared advisory lock. Benchmarks only probe for an
+    exclusive lock, releasing it immediately; they never reserve the GPU ahead
+    of the user. OS cleanup releases live locks even after process termination.
+    """
+    def __init__(self, benchmark=False, path=None):
+        self.benchmark = benchmark
+        self.path = path
+        self.fd = None
+
+    def __enter__(self):
+        import fcntl
+        import tempfile
+        from pathlib import Path
+        path = self.path or Path(tempfile.gettempdir()) / f"transcribe-stt-live-{os.getuid()}.lock"
+        self.fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        if not self.benchmark:
+            fcntl.flock(self.fd, fcntl.LOCK_SH)
+        return self
+
+    def check(self):
+        if not self.benchmark:
+            return
+        import fcntl
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("Benchmark stopped: interactive live transcription has GPU priority") from None
+        fcntl.flock(self.fd, fcntl.LOCK_UN)
+
+    def __exit__(self, *args):
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
 
 
 def clean_text(text):
@@ -109,16 +148,38 @@ def optimize_voxtral_live(model, model_path):
             "dtype_changed": float_change}
 
 
-class NativeStream:
-    """Bound streaming history without reloading weights or discarding audio.
+def native_session(model, delay_ms=None):
+    options = {"max_tokens": 4096}
+    if delay_ms is not None:
+        options["transcription_delay_ms"] = delay_ms
+    session = model.create_streaming_session(**options)
+    if getattr(session, "input_sample_rate", 16000) != 16000:
+        raise ValueError("This streaming model needs an unsupported sample rate")
+    return session
 
-    Prefer a quiet boundary after 12 seconds; force a flush at 20 seconds.
-    A flush drains delayed text before releasing the session. Each input sample
-    is fed exactly once, even if a request straddles the session boundary.
+
+def warm_native(model, silence, delay_ms=None):
+    # Compile/evaluate the streaming path before the microphone starts. Discard
+    # warm-up output and context; retain the same weights and compiled kernels.
+    session = native_session(model, delay_ms)
+    session.feed(silence)
+    session.close()
+    while not session.done:
+        session.step(max_decode_tokens=64)
+
+
+class NativeStream:
+    """Keep weights resident, suspend decoding during quiet microphone periods.
+
+    Detect input energy in 20 ms frames using the microphone monitor's quiet
+    threshold. Retain bounded pre-roll to preserve speech onset. Once an
+    active utterance has a one-second quiet tail, flush its pending text and
+    stop inference until signal returns. Active context remains bounded.
     """
     SAMPLE_RATE = 16000
 
-    def __init__(self, model, transcript, max_seconds=20, pause_after=12, on_reset=None):
+    def __init__(self, model, transcript, max_seconds=20, pause_after=12, on_reset=None,
+                 delay_ms=None, preroll_seconds=1):
         self.model = model
         self.transcript = transcript
         self.max_samples = round(max_seconds * self.SAMPLE_RATE)
@@ -126,15 +187,60 @@ class NativeStream:
             raise ValueError("Native session duration must be positive")
         self.pause_samples = round(pause_after * self.SAMPLE_RATE)
         self.on_reset = on_reset
+        self.delay_ms = delay_ms
         self.session = None
         self.samples = 0
         self.closed_sessions = 0
-        self._open()
+        self.quiet_samples = 0
+        self.preroll = deque(maxlen=round(preroll_seconds * self.SAMPLE_RATE))
+        self.inference_active = False
+        self.waiting_for_speech = True
+
+    @property
+    def idle(self):
+        return self.session is None
+
+    @classmethod
+    def _signal_bounds(cls, samples):
+        # A short onset should not disappear in the RMS of a whole 1s packet.
+        first, last = None, 0
+        for start in range(0, len(samples), 320):
+            frame = samples[start:start + 320]
+            if sum(float(s) ** 2 for s in frame) >= len(frame) * 0.003 ** 2:
+                if first is None:
+                    first = start
+                last = start + len(frame)
+        return first, last
+
+    def feed(self, samples, start, end, finish=False):
+        self.inference_active = False
+        was_waiting = self.waiting_for_speech
+        first_signal, last_signal = self._signal_bounds(samples)
+        self.waiting_for_speech = self.idle and not last_signal
+        if self.idle and not last_signal:
+            self.preroll.extend(samples)
+            if finish:
+                self.preroll.clear()
+                self.transcript.end = end
+            return
+        if self.idle:
+            if was_waiting:
+                self.transcript.emit("speech_start", start=start + first_signal / self.SAMPLE_RATE)
+            if self.preroll:
+                prefix = list(self.preroll)
+                samples = prefix + list(samples)
+                start -= len(prefix) / self.SAMPLE_RATE
+                last_signal += len(prefix)
+                self.preroll.clear()
+            self.transcript.start = start
+            self.quiet_samples = 0
+        self.quiet_samples = len(samples) - last_signal if last_signal else self.quiet_samples + len(samples)
+        self.inference_active = True
+        self._feed_active(samples, start, end, finish or self.quiet_samples >= self.SAMPLE_RATE)
+        self.waiting_for_speech = self.idle and self.quiet_samples >= self.SAMPLE_RATE
 
     def _open(self):
-        self.session = self.model.create_streaming_session(max_tokens=4096)
-        if getattr(self.session, "input_sample_rate", self.SAMPLE_RATE) != self.SAMPLE_RATE:
-            raise ValueError("This streaming model needs an unsupported sample rate")
+        self.session = native_session(self.model, self.delay_ms)
         self.samples = 0
 
     def _step(self):
@@ -160,7 +266,7 @@ class NativeStream:
         tail = samples[-8000:]
         return len(tail) == 8000 and sum(float(s) ** 2 for s in tail) / len(tail) < 0.003 ** 2
 
-    def feed(self, samples, start, end, finish=False):
+    def _feed_active(self, samples, start, end, finish=False):
         offset = 0
         while offset < len(samples):
             if self.session is None:
@@ -189,23 +295,45 @@ class NativeStream:
 
 
 def run(model_path, language, emit):
+    with LivePriority(benchmark=os.environ.get("TRANSCRIBE_STT_BENCHMARK") == "1") as priority:
+        priority.check()
+        return run_model(model_path, language, emit, priority)
+
+
+def run_model(model_path, language, emit, priority):
     import mlx.core as mx
     import numpy as np
     from mlx_audio.stt.utils import load_model
 
     diagnostics = os.environ.get("TRANSCRIBE_STT_LIVE_METRICS") == "1"
+    from importlib.metadata import PackageNotFoundError, version
+    runtime = {"python": sys.executable, "bridge": "idle-aware-2"}
+    for package in ("mlx", "mlx-audio"):
+        try:
+            runtime[package] = version(package)
+        except PackageNotFoundError:
+            runtime[package] = "unknown"
     started = time.monotonic()
     model = load_model(model_path)
+    priority.check()
     optimization = optimize_voxtral_live(model, model_path)
     native = callable(getattr(model, "create_streaming_session", None))
     transcript = Transcript(emit)
-    stream = NativeStream(model, transcript, on_reset=mx.clear_cache) if native else None
+    delay_ms = 80 if native and getattr(model.config, "model_type", None) == "voxtral_realtime" else None
+    if native:
+        warm_native(model, np.zeros(16000, dtype=np.float32), delay_ms)
+        mx.clear_cache()
+    stream = NativeStream(model, transcript, on_reset=mx.clear_cache,
+                          delay_ms=delay_ms, preroll_seconds=0.25) if native else None
     emit("ready", native=native, load_secs=time.monotonic() - started,
-         optimization=optimization,
+         optimization=optimization, runtime=runtime,
+         transcription_delay_ms=delay_ms, live_feed_seconds=0.1 if native else None,
          session_limit_seconds=stream.max_samples / stream.SAMPLE_RATE if native else None)
     for line in sys.stdin:
+        priority.check()
         request = json.loads(line)
         samples = np.asarray(request.get("samples", []), dtype=np.float32)
+        inference_started = time.perf_counter()
         if native:
             stream.feed(samples, request["start"], request["end"], request.get("finish", False))
         elif samples.size:
@@ -215,6 +343,9 @@ def run(model_path, language, emit):
         metrics = {"active_gpu_bytes": mx.get_active_memory(),
                    "cached_gpu_bytes": mx.get_cache_memory()} if diagnostics else {}
         emit("ack", language=transcript.language, **metrics,
+             idle=stream.waiting_for_speech if native else False,
+             inference_active=stream.inference_active if native else bool(samples.size),
+             inference_seconds=time.perf_counter() - inference_started,
              session_seconds=stream.samples / stream.SAMPLE_RATE if native else None,
              closed_sessions=stream.closed_sessions if native else None)
         if request.get("finish"):

@@ -1,0 +1,19 @@
+{
+  "first_text": "Buenos",
+  "idle_seconds": 1,
+  "job_log": [
+    "[09:08:09] loading model Voxtral-Mini-4B-Realtime-2602-4bit",
+    "[09:08:10] Optimized legacy Voxtral 4-bit layout in memory; checkpoint files unchanged",
+    "[09:08:11] Live engine: runtime={\"bridge\":\"idle-aware-2\",\"mlx\":\"0.32.2\",\"mlx-audio\":\"0.5.3\",\"python\":\"/Users/mike-axionomic/Library/Application Support/transcribe-stt/mlx-venv/bin/python3\"} · layout=voxtral-4bit-bf16-v1 · context limit=20.0s · model delay=80ms",
+    "[09:08:11] model ready in 2.4s",
+    "[09:08:11] Using low-latency live feed: 0.1s",
+    "[09:08:11] microphone: paced test fixture (48 kHz) · streaming · 0.1s feed",
+    "[09:08:13] inference: 0.81s per audio second (rolling measurement; above 1.00 falls behind)",
+    "[09:08:13] First text rendered after detected speech: 0.844s"
+  ],
+  "onset_to_completed_draw_seconds": 0.841018875,
+  "passed": true,
+  "test": "paced 48kHz capture -> Rust resampler -> Python Voxtral -> Rust UI -> terminal test-backend draw",
+  "ui_reported_first_text_ms": 843.703369140625,
+  "worker_result": "Ok(())"
+}

@@ -193,6 +193,7 @@ fn run_headless_loop(rx: std::sync::mpsc::Receiver<Event>) -> Result<()> {
             | Event::RecordingLevel { .. }
             | Event::RecordingStopped
             | Event::LivePartial(_)
+            | Event::LiveSpeechStarted { .. }
             | Event::LiveProgress { .. } => {}
             Event::EngineLog(line) => eprintln!("{line}"),
             Event::EngineHeartbeat(secs) => eprintln!("engine working… {secs}s elapsed"),

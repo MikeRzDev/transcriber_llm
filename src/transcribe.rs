@@ -51,7 +51,7 @@ pub struct Job {
     pub split_mode: SplitMode,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Segment {
     pub start_ms: i64,
     pub end_ms: i64,
@@ -78,10 +78,14 @@ pub enum Event {
         seconds: f32,
     },
     RecordingStopped,
+    LiveSpeechStarted {
+        at: std::time::Instant,
+    },
     LiveProgress {
         seconds: f32,
         /// Rolling inference seconds per audio second; above 1 falls behind.
         rtf: Option<f32>,
+        idle: bool,
     },
     /// Current, replaceable text; only committed segments are exported.
     LivePartial(Segment),

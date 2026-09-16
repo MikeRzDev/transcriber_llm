@@ -18,6 +18,10 @@ pub struct LiveState {
     pub seconds: f32,
     pub decoded_seconds: f32,
     pub inference_rtf: Option<f32>,
+    pub inference_idle: bool,
+    pub pending_speech_started: Option<std::time::Instant>,
+    pub first_text_pending_render: Option<std::time::Instant>,
+    pub first_text_ms: Option<f32>,
 }
 
 impl LiveState {
@@ -38,6 +42,42 @@ impl LiveState {
 }
 
 impl App {
+    /// Called only after a successful terminal draw of the following transcript.
+    pub fn live_text_rendered(&mut self) -> bool {
+        if !self.live.visible
+            || !self.transcript.follow
+            || self.show_log
+            || self.settings.open
+            || self.picker.open
+            || self.hub.open
+            || self.audio_input.open
+            || self.start_prompt.is_some()
+            || self.settings.dir_picker.is_some()
+            || self.settings.move_prompt.is_some()
+            || self.speakers_input.is_some()
+            || self.language_input.is_some()
+            || self.naming.is_some()
+            || self.tdrz_prompt.is_some()
+        {
+            return false;
+        }
+        let Some(started) = self.live.first_text_pending_render.take() else {
+            return false;
+        };
+        let ms = started.elapsed().as_secs_f32() * 1000.0;
+        self.live.first_text_ms = Some(ms);
+        self.job_log.push(format!(
+            "First text rendered after detected speech: {:.3}s{}",
+            ms / 1000.0,
+            if ms > 900.0 {
+                " — 0.900s target exceeded"
+            } else {
+                ""
+            }
+        ));
+        true
+    }
+
     pub fn start_live(&mut self) {
         if self.busy() {
             self.status = "A job is already running — stop or cancel it first".into();

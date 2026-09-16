@@ -26,7 +26,7 @@ Use a longer WAV and `--seconds 120` (or more) to evaluate drift during longer s
 
 By default, if every baseline repetition exceeds 2 RTF, the benchmark skips additional feed sizes for that model and records the reason. Voxtral fp16 hit this cutoff in this run. Use `--max-sweep-rtf 0 --resume` to complete all feed sizes; `--resume` reuses matching saved measurements and checks the input checksum, duration, language, and repetition count.
 
-To install these results in the **m** model selector, append `--resume --install` to the benchmark command. The app reads `~/.config/transcribe-stt/live-benchmarks.json` and shows ratings only when the hardware and model-file metadata still match. Ratings do not disable selection. Starting a live session automatically applies the saved feed size for native streaming models; models without a matching result use adaptive batching. Qwen and Parakeet use the tested speech windows of up to four seconds.
+To install these results in the **m** model selector, append `--resume --install` to the benchmark command. The app reads `~/.config/transcribe-stt/live-benchmarks.json` and shows ratings only when the hardware and model-file metadata still match. Ratings do not disable selection. Native live sessions now use a 100 ms feed ceiling to prioritize first-text latency; saved throughput feed sizes describe the benchmark, not the current live feed. Qwen and Parakeet use the tested speech windows of up to four seconds.
 
 A subsequent [120-second streaming check](live-duration.md) supersedes the short-run rating for Voxtral 4-bit. Its streaming context is now renewed every 12–20 seconds without reloading weights, but sustained throughput in that test was still slower than realtime.
 
@@ -47,3 +47,24 @@ For a long-session check with audio arriving at normal microphone speed:
 This takes one hour of wall time after model loading. The short fixture is repeated using bounded memory. Each request waits until its audio would have arrived from a microphone, using absolute deadlines so a slow request does not move later capture deadlines. The default benchmark runs as fast as possible and is a throughput stress test; it does not reproduce the GPU idle time available during speech. These modes must not be mixed when resuming a report.
 
 `--diagnostics` records active/cached GPU memory, streaming-context age, and completed context flushes. A `.progress.json` file updates every minute with speed and backlog. Diagnostics are opt-in and do not record microphone audio. The final report retains every request measurement.
+
+
+The initial hour-long paced run was interrupted and is **not** evidence of one-hour live stability. Its later progress included a minute above realtime and a 6.1-second queue peak. See [the preserved interruption status](voxtral-hour-paced-interrupted.json). It also remained active while the user could run live transcription, creating possible GPU contention.
+
+The updated bridge gives interactive live sessions priority: benchmark processes stop at a request boundary when a live session starts. Interrupted benchmarks save partial measurements and never use them for fit recommendations. The app's `l` job log records the actual Python/runtime/layout at startup, followed by engine versus round-trip timing, context age, reset count, and GPU memory every ten seconds. These are diagnostic timings; they do not establish the cause of a reported live slowdown by themselves.
+
+
+To test a quiet wait followed by speech, rather than continuous speech:
+
+```sh
+.venv-realtime/bin/python scripts/verify-idle-resume.py \
+  --model /Volumes/MikeExternal/ai_models/speech-to-text-realtime/Voxtral-Mini-4B-Realtime-2602-4bit \
+  --audio samples/benchmark-es.wav
+```
+
+This checks ten wall-clock minutes of quiet input followed by the first 24 seconds of the speech fixture. It asserts that silence caused no decoder work, speech resumed, and the opening words survived. The check refuses to start while the app is running, yields if a live session starts, and has a hard timeout. It never uses the silence-dominated timing as a model-fit rating. It does not exercise the physical microphone or establish that every kind of background noise will be classified as quiet.
+
+
+The current first-text latency check uses `--batch-seconds 0.1` and checks onset-to-first-meaningful-partial time directly. For the requested 7+ minute pause, use `--quiet-seconds 480`; the default quiet interval is 600 seconds. It reserves a 100 ms margin by requiring the bridge's first partial within 0.9 seconds. The test measures the bridge, not a physical microphone or terminal display. The app separately displays first-text timing from detected microphone speech through the completed terminal draw. The latest [full software-path latency check](voxtral-idle-latency.md) measured 0.836 seconds after eight minutes of silence, against the 0.9-second target.
+
+The low-latency profile warms the native path before capture, uses Voxtral's supported 80 ms delay, and retains 250 ms of quiet pre-roll. These settings trade some recognition accuracy for earlier text. Historical throughput reports used different feed/delay settings and are not latency guarantees.

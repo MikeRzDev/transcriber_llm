@@ -50,7 +50,7 @@ impl LiveFit {
             Self::Borderline { rtf, batch } => ("borderline", rtf, batch),
             Self::TooSlow { rtf, batch } => ("too slow for this Mac", rtf, batch),
         };
-        format!("Live: {status} · {rtf:.2}s/audio s · {batch}s feed")
+        format!("Live: {status} · {rtf:.2}s/audio s · {batch}s test feed")
     }
 }
 

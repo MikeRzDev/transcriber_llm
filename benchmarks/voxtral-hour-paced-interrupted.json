@@ -1,0 +1,22 @@
+{
+  "status": "interrupted",
+  "reason": "Stopped to remove the background benchmark as a competing GPU workload during user live transcription. This is not a completed one-hour validation.",
+  "last_saved_progress": {
+    "model": "Voxtral-Mini-4B-Realtime-2602-4bit",
+    "paced": true,
+    "audio_seconds": 1980.0,
+    "wall_seconds": 1980.8652855829569,
+    "last_minute_rtf": 0.39261169866658746,
+    "peak_queue_seconds": 6.099461667006835,
+    "session_seconds": 0.0,
+    "closed_sessions": 99,
+    "active_gpu_bytes": 2509663344,
+    "cached_gpu_bytes": 0
+  },
+  "observed_limitations": [
+    "The benchmark later reached 1.033 processing seconds per audio second in one reported minute.",
+    "A 6.10-second queue peak was reported.",
+    "Per-request data from this older interrupted run was not saved.",
+    "The benchmark exercised the Python bridge, not microphone capture and terminal rendering."
+  ]
+}

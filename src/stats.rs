@@ -1,3 +1,7 @@
+use std::sync::{
+    mpsc::{sync_channel, SyncSender},
+    Arc, Mutex,
+};
 use std::time::{Duration, Instant};
 
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
@@ -9,8 +13,8 @@ const REFRESH_EVERY: Duration = Duration::from_millis(1000);
 /// weights, so counting only our own PID would hide most of the RAM a
 /// job uses). Refreshed at most once per second from the render loop.
 pub struct ProcStats {
-    system: System,
-    pid: Pid,
+    requests: SyncSender<()>,
+    latest: Arc<Mutex<Option<(u64, f32)>>>,
     last_refresh: Instant,
     pub mem_bytes: u64,
     /// Raw sysinfo value: percent of a single core, so it can exceed 100
@@ -21,10 +25,39 @@ pub struct ProcStats {
 
 impl ProcStats {
     pub fn new() -> Self {
+        let mut system = System::new();
+        let pid = Pid::from_u32(std::process::id());
+        Self::with_sampler(move || {
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::All,
+                true,
+                ProcessRefreshKind::nothing().with_memory().with_cpu(),
+            );
+            tally_tree(&system, pid)
+        })
+    }
+
+    fn with_sampler(mut sample: impl FnMut() -> (u64, f32) + Send + 'static) -> Self {
+        let (requests, receiver) = sync_channel(1);
+        let latest = Arc::new(Mutex::new(None));
+        let worker_latest = Arc::downgrade(&latest);
+        std::thread::spawn(move || {
+            while receiver.recv().is_ok() {
+                if worker_latest.strong_count() == 0 {
+                    break;
+                }
+                let result = sample();
+                let Some(latest) = worker_latest.upgrade() else {
+                    break;
+                };
+                if let Ok(mut slot) = latest.lock() {
+                    *slot = Some(result);
+                };
+            }
+        });
         let mut stats = Self {
-            system: System::new(),
-            pid: Pid::from_u32(std::process::id()),
-            // Trick refresh_if_due into running on the first call
+            requests,
+            latest,
             last_refresh: Instant::now() - REFRESH_EVERY,
             mem_bytes: 0,
             cpu_percent: 0.0,
@@ -37,18 +70,18 @@ impl ProcStats {
     }
 
     pub fn refresh_if_due(&mut self) {
-        if self.last_refresh.elapsed() < REFRESH_EVERY {
-            return;
+        // Both operations are nonblocking: a slow OS process query must never
+        // delay a streamed word or even contend on its result mutex in the UI.
+        if let Ok(mut latest) = self.latest.try_lock() {
+            if let Some((memory, cpu)) = latest.take() {
+                self.mem_bytes = memory;
+                self.cpu_percent = cpu;
+            }
         }
-        self.last_refresh = Instant::now();
-        // All processes, not just our PID: descendants (the MLX/pip
-        // children) can only be found by walking parent links.
-        self.system.refresh_processes_specifics(
-            ProcessesToUpdate::All,
-            true,
-            ProcessRefreshKind::nothing().with_memory().with_cpu(),
-        );
-        (self.mem_bytes, self.cpu_percent) = tally_tree(&self.system, self.pid);
+        if self.last_refresh.elapsed() >= REFRESH_EVERY {
+            let _ = self.requests.try_send(());
+            self.last_refresh = Instant::now();
+        }
     }
 
     pub fn label(&self) -> String {
@@ -119,10 +152,49 @@ mod tests {
 
     #[test]
     fn reads_own_process() {
-        let stats = ProcStats::new();
+        let mut stats = ProcStats::new();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while stats.mem_bytes == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+            stats.refresh_if_due();
+        }
         // The test binary certainly uses some memory
         assert!(stats.mem_bytes > 1_000_000, "mem: {}", stats.mem_bytes);
         assert!(stats.core_count >= 1);
+    }
+
+    #[test]
+    fn slow_sampling_and_a_locked_result_do_not_block_ui_refresh() {
+        let (release, waiting) = std::sync::mpsc::channel::<()>();
+        let (entered, started) = std::sync::mpsc::channel();
+        let stats = ProcStats::with_sampler(move || {
+            let _ = entered.send(());
+            let _ = waiting.recv();
+            (1234567, 12.0)
+        });
+        started.recv_timeout(Duration::from_secs(1)).unwrap();
+        let latest = stats.latest.clone();
+        let guard = latest.lock().unwrap();
+        let (done, result) = std::sync::mpsc::channel();
+        let ui = std::thread::spawn(move || {
+            let mut stats = stats;
+            for _ in 0..10 {
+                stats.last_refresh = Instant::now() - REFRESH_EVERY;
+                stats.refresh_if_due();
+            }
+            let _ = done.send(stats);
+        });
+        let returned = result.recv_timeout(Duration::from_secs(1));
+        drop(guard);
+        drop(release);
+        ui.join().unwrap();
+        let mut stats = returned.expect("UI refresh blocked on the sampler or its mutex");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while stats.mem_bytes == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+            stats.refresh_if_due();
+        }
+        assert_eq!(stats.mem_bytes, 1234567);
     }
 
     #[test]

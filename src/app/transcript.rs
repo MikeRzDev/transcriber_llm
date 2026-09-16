@@ -5,6 +5,20 @@ use std::path::PathBuf;
 
 use crate::transcribe::Segment;
 
+/// Wrapped history is prepared in the update phase, once per new segment.
+/// Rendering clones only visible lines, regardless of recording duration.
+#[derive(Default)]
+pub(crate) struct TranscriptLayout {
+    pub width: usize,
+    pub names: BTreeMap<u8, String>,
+    pub segment_count: usize,
+    pub committed: Vec<ratatui::text::Line<'static>>,
+    pub partial_source: Option<Segment>,
+    pub partial: Vec<ratatui::text::Line<'static>>,
+    #[cfg(test)]
+    pub wrapped_segments: usize,
+}
+
 pub struct TranscriptState {
     pub segments: Vec<Segment>,
     pub partial: Option<Segment>,
@@ -24,6 +38,7 @@ pub struct TranscriptState {
     /// Human names assigned to speaker indices via the naming dialog
     /// (`n`); empty = anonymous A/B/C labels
     pub speaker_names: BTreeMap<u8, String>,
+    pub(crate) layout: TranscriptLayout,
 }
 
 impl TranscriptState {
@@ -39,6 +54,7 @@ impl TranscriptState {
             model_name: None,
             diarization: None,
             speaker_names: BTreeMap::new(),
+            layout: TranscriptLayout::default(),
         }
     }
 
@@ -54,6 +70,12 @@ impl TranscriptState {
         self.diarization = diarization;
         self.speaker_names.clear();
         self.source = Some(source);
+        self.invalidate_layout();
+    }
+
+    /// Required when replacing/editing committed history rather than appending.
+    pub(crate) fn invalidate_layout(&mut self) {
+        self.layout = TranscriptLayout::default();
     }
 
     pub fn scroll_up(&mut self, lines: usize) {
