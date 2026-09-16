@@ -1125,6 +1125,42 @@ mod tests {
     }
 
     #[test]
+    fn model_picker_shows_live_fit_without_blocking_selection() {
+        use crate::live_benchmark::LiveFit;
+        use crossterm::event::KeyModifiers;
+        use ratatui::{backend::TestBackend, Terminal};
+        let _guard = lock_env();
+        let dir = tempdir();
+        std::env::set_var("TRANSCRIBE_STT_CONFIG", dir.join("config.toml"));
+        for name in ["Fast", "Borderline", "TooSlow", "Untested", "ForcedAligner"] {
+            let model = dir.join(name);
+            std::fs::create_dir_all(&model).unwrap();
+            std::fs::write(model.join("config.json"), r#"{"model_type":"qwen3_asr"}"#).unwrap();
+            std::fs::write(model.join("model.safetensors"), "weights").unwrap();
+        }
+        let mut app = test_app(dir.clone());
+        app.library.dir = dir.clone();
+        app.on_key(KeyCode::Char('m'), KeyModifiers::NONE);
+        assert!(app.picker.open);
+        app.picker.live_fit.insert(dir.join("Fast"), LiveFit::Good { rtf: 0.06, batch: 4.0 });
+        app.picker.live_fit.insert(dir.join("Borderline"), LiveFit::Borderline { rtf: 0.95, batch: 1.0 });
+        app.picker.live_fit.insert(dir.join("TooSlow"), LiveFit::TooSlow { rtf: 6.16, batch: 0.5 });
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|frame| crate::ui::draw(frame, &app)).unwrap();
+        let screen = terminal.backend().buffer().content.iter().map(|c| c.symbol()).collect::<String>();
+        for text in ["Live: good fit", "Live: borderline", "Live: too slow for this Mac", "Live: unavailable", "Live: not benchmarked on this Mac", "6.16s/audio s"] {
+            assert!(screen.contains(text), "missing {text}");
+        }
+        app.picker.selected = app.library.models.iter().position(|m| m.name == "TooSlow").unwrap();
+        app.on_key(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(!app.picker.open);
+        assert_eq!(app.library.selected.as_ref().unwrap().name, "TooSlow");
+        app.transcriber.shutdown();
+        std::env::remove_var("TRANSCRIBE_STT_CONFIG");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn live_transcript_follows_partials_and_exports_on_stop() {
         use crossterm::event::KeyModifiers;
         use ratatui::{backend::TestBackend, Terminal};
@@ -1167,6 +1203,10 @@ mod tests {
         }));
         crate::ui::clamp_transcript(&mut app, rect);
         assert!(app.transcript.scroll > 0);
+        app.handle_event(Event::LiveProgress {
+            seconds: 45.0,
+            rtf: Some(1.5),
+        });
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         terminal.draw(|f| crate::ui::draw(f, &app)).unwrap();
         let screen = terminal
@@ -1178,6 +1218,13 @@ mod tests {
             .collect::<String>();
         assert!(screen.contains("LATEST words appear live"));
         assert!(screen.contains("RECORDING"));
+        assert!(screen.contains("1.50s/audio s"));
+        assert!(screen.contains("falling behind"));
+        app.handle_event(Event::LiveProgress {
+            seconds: 46.0,
+            rtf: None,
+        });
+        assert_eq!(app.live.inference_rtf, Some(1.5));
         app.on_key(KeyCode::PageUp, KeyModifiers::NONE);
         let paused = app.transcript.scroll;
         app.handle_event(Event::LivePartial(Segment {

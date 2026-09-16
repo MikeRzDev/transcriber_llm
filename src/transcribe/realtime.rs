@@ -1,5 +1,6 @@
 //! Live MLX transcription: persistent model process, bounded microphone
 //! capture, native streaming where available, speech windows otherwise.
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -53,6 +54,71 @@ struct Runner {
     readers: Vec<std::thread::JoinHandle<()>>,
     native: bool,
     language: Option<String>,
+    speed: InferenceSpeed,
+    /// A validated benchmark setting takes precedence over online guesses.
+    feed_samples: Option<usize>,
+}
+
+#[derive(Default)]
+struct InferenceSpeed {
+    recent: VecDeque<(f64, f64)>,
+    last_seconds: f64,
+    observed_audio: f64,
+    best_batch: Option<(f64, f64)>, // audio seconds, measured RTF
+}
+
+impl InferenceSpeed {
+    fn observe(&mut self, audio_seconds: f64, inference_seconds: f64) -> f32 {
+        self.last_seconds = inference_seconds;
+        // Initial native prefill can be unusually cheap or expensive. Compare
+        // batch efficiency only after at least four seconds have been fed.
+        if self.observed_audio >= 4.0 {
+            let rtf = inference_seconds / audio_seconds;
+            if self.best_batch.is_none_or(|(_, best)| rtf < best) {
+                self.best_batch = Some((audio_seconds, rtf));
+            }
+        }
+        self.observed_audio += audio_seconds;
+        self.recent.push_back((audio_seconds, inference_seconds));
+        if self.recent.len() > 8 {
+            self.recent.pop_front();
+        }
+        let (audio, elapsed) = self
+            .recent
+            .iter()
+            .fold((0.0, 0.0), |(a, t), (da, dt)| (a + da, t + dt));
+        (elapsed / audio) as f32
+    }
+
+    fn batch_samples(&self) -> usize {
+        if let (Some((best_seconds, best_rtf)), Some((audio, elapsed))) =
+            (self.best_batch, self.recent.back())
+        {
+            // Bigger batches can be slower (notably Voxtral); fall back to
+            // measured efficient chunks instead of expanding without limit.
+            if elapsed / audio > best_rtf * 1.1 {
+                return (best_seconds * 16_000.0).clamp(8000.0, 64_000.0) as usize;
+            }
+        }
+        // Allow 20% headroom relative to the last observed inference cost.
+        // Bounds control latency/memory; they are not model speed estimates.
+        (self.last_seconds * 1.25 * 16_000.0).clamp(8000.0, 64_000.0) as usize
+    }
+}
+
+fn catch_up_audio(
+    mut packets: impl Iterator<Item = Vec<f32>>,
+    resampler: &mut Resample16k,
+    audio: &mut Vec<f32>,
+    max_samples: usize,
+) -> Result<()> {
+    // Coalesce queued packets without waiting for new input. Leave room for
+    // one 100 ms packet so each native request stays at or below four seconds.
+    while audio.len() + 1600 <= max_samples {
+        let Some(input) = packets.next() else { break };
+        audio.extend(resampler.push(&input)?);
+    }
+    Ok(())
 }
 
 impl Runner {
@@ -82,6 +148,8 @@ impl Runner {
             readers: Vec::new(),
             native: false,
             language: job.language.clone(),
+            speed: InferenceSpeed::default(),
+            feed_samples: None,
         };
         let stdout = runner.child.stdout.take().unwrap();
         runner.readers.push(std::thread::spawn(move || {
@@ -107,6 +175,16 @@ impl Runner {
         }));
         if !runner.wait_for("ready", events, cancel)? {
             return Ok(None);
+        }
+        if runner.native {
+            runner.feed_samples =
+                crate::live_benchmark::for_model(&job.model).map(|fit| fit.feed_samples());
+            if let Some(samples) = runner.feed_samples {
+                let _ = events.send(Event::EngineLog(format!(
+                    "Using benchmarked live feed: {}s on this Mac",
+                    samples as f64 / 16_000.0,
+                )));
+            }
         }
         Ok(Some(runner))
     }
@@ -193,6 +271,7 @@ impl Runner {
         if cancel.load(Ordering::SeqCst) {
             return Ok(false);
         }
+        let started = Instant::now();
         let stdin = self
             .child
             .stdin
@@ -206,8 +285,17 @@ impl Runner {
         stdin.flush()?;
         let complete = self.wait_for("ack", events, cancel)?;
         if complete {
+            let rtf = if !finish && !samples.is_empty() {
+                Some(self.speed.observe(
+                    samples.len() as f64 / 16_000.0,
+                    started.elapsed().as_secs_f64(),
+                ))
+            } else {
+                None
+            };
             let _ = events.send(Event::LiveProgress {
                 seconds: end as f32,
+                rtf,
             });
         }
         Ok(complete)
@@ -294,14 +382,16 @@ pub(super) fn run(
         stop.clone(),
         job.input_device.clone(),
     )?;
-    let mode = if runner.native {
-        "continuous streaming"
+    let mode = if let Some(samples) = runner.feed_samples {
+        format!("streaming · benchmark {}s", samples as f64 / 16_000.0)
+    } else if runner.native {
+        "continuous streaming · adaptive".into()
     } else {
-        "speech windows · up to 4s"
+        "speech windows · up to 4s".into()
     };
     let _ = events.send(Event::RecordingStarted {
         device: capture.device.clone(),
-        mode: mode.into(),
+        mode,
     });
     let mut resampler = Resample16k::new(capture.sample_rate)?;
     let mut window = SpeechWindow::default();
@@ -321,22 +411,34 @@ pub(super) fn run(
                     count += audio.len();
                     if runner.native {
                         native_audio.extend(audio);
-                        // A 500 ms feed amortizes encoder overhead; the level
-                        // meter still updates independently every 100 ms.
-                        if native_audio.len() < 8000 {
+                        // Use the model's saved benchmark setting exactly;
+                        // unbenchmarked models retain adaptive batching.
+                        if native_audio.len() < runner.feed_samples.unwrap_or(8000) {
                             continue;
                         }
+                        let before = native_audio.len();
+                        catch_up_audio(
+                            std::iter::from_fn(|| capture.packets.try_recv().ok()),
+                            &mut resampler,
+                            &mut native_audio,
+                            runner
+                                .feed_samples
+                                .unwrap_or_else(|| runner.speed.batch_samples()),
+                        )?;
+                        count += native_audio.len() - before;
+                        let send_len = runner.feed_samples.unwrap_or(native_audio.len());
+                        let start = count - native_audio.len();
                         if !runner.audio(
-                            &native_audio,
-                            (count - native_audio.len()) as f64 / 16_000.0,
-                            count as f64 / 16_000.0,
+                            &native_audio[..send_len],
+                            start as f64 / 16_000.0,
+                            (start + send_len) as f64 / 16_000.0,
                             false,
                             events,
                             cancel,
                         )? {
                             return Ok(());
                         }
-                        native_audio.clear();
+                        native_audio.drain(..send_len);
                     } else if window.push(&audio) {
                         let (audio, start, end, voiced) = window.take();
                         if voiced && !runner.audio(&audio, start, end, false, events, cancel)? {
@@ -345,6 +447,7 @@ pub(super) fn run(
                         if !voiced {
                             let _ = events.send(Event::LiveProgress {
                                 seconds: end as f32,
+                                rtf: None,
                             });
                         }
                     }
@@ -402,6 +505,51 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn catch_up_batches_preserve_audio_and_bound_each_request() {
+        let mut packets = (0..100).map(|_| vec![0.1; 1600]).peekable();
+        let mut resampler = Resample16k::new(16000).unwrap();
+        let mut total = 0;
+        let mut requests = 0;
+        while packets.peek().is_some() {
+            let mut audio = Vec::new();
+            catch_up_audio(&mut packets, &mut resampler, &mut audio, 64000).unwrap();
+            assert!(!audio.is_empty());
+            assert!(audio.len() <= 64000);
+            total += audio.len();
+            requests += 1;
+        }
+        total += resampler.finish().unwrap().len();
+        assert_eq!(total, 160000);
+        assert_eq!(requests, 3);
+    }
+
+    #[test]
+    fn inference_speed_weights_audio_duration_and_recovers_after_stall() {
+        let mut speed = InferenceSpeed::default();
+        assert_eq!(speed.batch_samples(), 8000);
+        assert_eq!(speed.observe(0.5, 4.0), 8.0);
+        assert_eq!(speed.batch_samples(), 64000);
+        assert!((speed.observe(4.0, 2.0) - 6.0 / 4.5).abs() < 0.001);
+        assert_eq!(speed.batch_samples(), 40000);
+        for _ in 0..8 {
+            speed.observe(4.0, 0.2);
+        }
+        assert_eq!(speed.batch_samples(), 8000);
+        assert!((speed.observe(4.0, 0.2) - 0.05).abs() < 0.001);
+    }
+
+    #[test]
+    fn larger_slower_batches_fall_back_to_measured_efficient_size() {
+        let mut speed = InferenceSpeed::default();
+        speed.observe(4.0, 0.1); // Exclude startup from batch comparisons.
+        speed.observe(1.0, 0.95);
+        speed.observe(4.0, 4.8);
+        assert_eq!(speed.batch_samples(), 16000);
+        speed.observe(1.0, 0.4);
+        assert_eq!(speed.batch_samples(), 8000);
+    }
+
     #[test]
     fn model_compatibility_explains_aligner_and_voxmlx_formats() {
         let root = std::env::temp_dir().join(format!("live-model-check-{}", std::process::id()));

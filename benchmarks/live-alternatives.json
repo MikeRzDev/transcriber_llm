@@ -1,0 +1,1317 @@
+{
+  "runtime": {
+    "mlx": "0.32.2",
+    "mlx-audio": "0.5.3",
+    "numpy": "2.5.3"
+  },
+  "hardware": {
+    "hw.memsize": "25769803776",
+    "hw.model": "Mac16,12",
+    "machdep.cpu.brand_string": "Apple M4"
+  },
+  "timestamp": "2026-09-16T05:13:00.983659+00:00",
+  "machine": "macOS-26.5.1-arm64-arm-64bit",
+  "python": "3.12.13 (main, Jun 23 2026, 15:44:24) [Clang 22.1.3 ]",
+  "audio": "/Users/mike-axionomic/Documents/AI/transcriber_llm/samples/benchmark-es-300s.wav",
+  "audio_sha256": "bab7e42e3879a33cc3b5f872056c6e4fff5cb5a3302ff97430b1e015095a09c1",
+  "audio_seconds": 300.0,
+  "language": "es",
+  "repeats": 1,
+  "models": [
+    {
+      "model": "Qwen3-ASR-1.7B-8bit",
+      "path": "/Volumes/MikeExternal/ai_models/speech-to-text-realtime/Qwen3-ASR-1.7B-8bit",
+      "trials": [
+        {
+          "status": "ok",
+          "native": false,
+          "batch_seconds": 4.0,
+          "load_seconds": 3.637234583031386,
+          "session_limit_seconds": null,
+          "closed_sessions": null,
+          "audio_seconds": 300.0,
+          "first_chunk_seconds": 0.648204917088151,
+          "sustained_rtf": 0.13362728026766343,
+          "end_to_end_rtf": 0.134007820977907,
+          "finish_seconds": 0.0004664170555770397,
+          "max_request_seconds": 0.648204917088151,
+          "simulated_peak_queue_seconds": 0.648204917088151,
+          "simulated_drain_after_stop_seconds": 0.553183626034297,
+          "queue_growth_seconds_per_wall_minute": 0.0,
+          "observed_buffer_allowance_seconds": 2,
+          "segments": [
+            "Buenos días. Hoy vamos a comprobar la velocidad de la transcripción.",
+            "en tiempo real necesitamos escuchar todas las palabras y",
+            "perder información cuando el sistema está ocupado. Esta prueba.",
+            "utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto.",
+            "tarda cada fragmento si el procesamiento es más lento que la",
+            "el audio pendiente seguirá aumentando al terminar guardar.",
+            "veremos los resultados para elegir una configuración adecuada para esta.",
+            "equipo. Buenos días. Hoy vamos a comprobar la velocidad de la",
+            "transcripción en tiempo real necesitamos escuchar todas las",
+            "palabras sin perder información cuando el sistema está ocupado.",
+            "Esta prueba utiliza la misma grabación para comparar los diferentes.",
+            "modelos. Primero revisamos el tiempo de carga y después medimos",
+            "vimos cuánto tarda cada fragmento si el procesamiento es más",
+            "Lento que la voz, el audio pendiente seguirá aumentando.",
+            "guardaremos los resultados para elegir una configuración adecuada.",
+            "para este equipo. Buenos días. Hoy vamos a comprobar la velocidad",
+            "velocidad de la transcripción en tiempo real. Necesitamos escuchar.",
+            "todas las palabras sin perder información cuando el sistema está",
+            "esta prueba utiliza la misma grabación para comparar los",
+            "los diferentes modelos. Primero revisamos el tiempo de carga.",
+            "y después medimos cuánto tarda cada fragmento si el procesamiento",
+            "es más lento que la voz, el audio pendiente seguirá aumentando.",
+            "Al terminar guardaremos los resultados para elegir una configuración.",
+            "duración adecuada para este equipo. Buenos días, hoy vamos a",
+            "comprobar la velocidad de la transcripción en tiempo real, necesitamos",
+            "escuchar todas las palabras sin perder información cuando el sistema",
+            "tema está ocupado. Esta prueba utiliza la misma grabación.",
+            "para comparar los diferentes modelos. Primero revisamos el tiempo",
+            "de carga y después medimos cuánto tarda cada fragmento, si",
+            "el procesamiento es más lento que la voz, el audio pendiente seguido",
+            "aumentando. Al terminar guardaremos los resultados para elegir",
+            "una configuración adecuada para este equipo. Buenos días.",
+            "Hoy vamos a comprobar la velocidad de la transcripción en tiempo real.",
+            "Necesitamos escuchar todas las palabras sin perder información.",
+            "cuando el sistema está ocupado. Esta prueba utiliza la misma",
+            "grabación para comparar los diferentes modelos. Primero revisamos",
+            "el tiempo de carga y después medimos cuánto tarda cada fragmento.",
+            "si el procesamiento es más lento que la voz el audio",
+            "seguirá aumentando. Al terminar guardaremos los resultados.",
+            "para elegir una configuración adecuada para este equipo. Buenos",
+            "Hoy vamos a comprobar la velocidad de la transcripción en tiempo.",
+            "tiempo real necesitamos escuchar todas las palabras sin perder",
+            "información cuando el sistema está ocupado. Esta prueba utiliza",
+            "usa la misma grabación para comparar los diferentes modelos.",
+            "primero revisamos el tiempo de carga y después medimos cuánto tarda",
+            "cada fragmento. Si el procesamiento es más lento que la voz.",
+            "El audio pendiente seguirá aumentando. Al terminar guardaremos lo",
+            "los resultados para elegir una configuración adecuada para este equilibrio.",
+            "Buenos días. Hoy vamos a comprobar la velocidad de la transmisión.",
+            "en tiempo real necesitamos escuchar todas las palabras.",
+            "sin perder información cuando el sistema está ocupado. Esta",
+            "prueba utiliza la misma grabación para comparar los diferentes modelos.",
+            "primero revisamos el tiempo de carga y después medimos",
+            "cuánto tarda cada fragmento si el procesamiento es más lento",
+            "que la voz, el audio pendiente seguirá aumentando al terminar.",
+            "guardaremos los resultados para elegir una configuración adecuada.",
+            "para este equipo. Buenos días. Hoy vamos a comprobar la velocidad.",
+            "de la transcripción en tiempo real necesitamos escuchar todas",
+            "las palabras sin perder información cuando el sistema está ocupado.",
+            "esta prueba utiliza la misma grabación para comparar los diferentes",
+            "modelos. Primero revisamos el tiempo de carga y después",
+            "medimos cuánto tarda cada fragmento, si el procesamiento",
+            "Es más lento que la voz, el audio pendiente seguirá aumentando.",
+            "Al terminar guardaremos los resultados para elegir una configuración.",
+            "adecuada para este equipo. Buenos días. Hoy vamos a comprobar.",
+            "la velocidad de la transcripción en tiempo real necesitamos",
+            "escuchar todas las palabras sin perder información cuando el sistema",
+            "está ocupado. Esta prueba utiliza la misma grabación para comprobar",
+            "parar los diferentes modelos. Primero revisamos el tiempo de",
+            "y después medimos cuánto tarda cada fragmento. Si el",
+            "es más lento que la voz, el audio pendiente seguirá aumentando.",
+            "Al terminar guardaremos los resultados para elegir una.",
+            "configuración adecuada para este equipo. Buenos días. Hoy va",
+            "a comprobar la velocidad de la transcripción en tiempo real."
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 4.0,
+              "elapsed": 0.648204917088151,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 4.0,
+              "end": 8.0,
+              "elapsed": 0.49275858397595584,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 8.0,
+              "end": 12.0,
+              "elapsed": 0.49495325004681945,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 12.0,
+              "end": 16.0,
+              "elapsed": 0.49309100001119077,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 16.0,
+              "end": 20.0,
+              "elapsed": 0.5605450000148267,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 20.0,
+              "end": 24.0,
+              "elapsed": 0.5301398340379819,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 24.0,
+              "end": 28.0,
+              "elapsed": 0.49145045899786055,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 28.0,
+              "end": 32.0,
+              "elapsed": 0.5486282090423629,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 32.0,
+              "end": 36.0,
+              "elapsed": 0.5519499169895425,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 36.0,
+              "end": 40.0,
+              "elapsed": 0.5073934169486165,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 40.0,
+              "end": 44.0,
+              "elapsed": 0.48410541599150747,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 44.0,
+              "end": 48.0,
+              "elapsed": 0.5023188750492409,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 48.0,
+              "end": 52.0,
+              "elapsed": 0.541165417060256,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 52.0,
+              "end": 56.0,
+              "elapsed": 0.5946105410112068,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 56.0,
+              "end": 60.0,
+              "elapsed": 0.5429864999605343,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 60.0,
+              "end": 64.0,
+              "elapsed": 0.5149439590750262,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 64.0,
+              "end": 68.0,
+              "elapsed": 0.5473614580696449,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 68.0,
+              "end": 72.0,
+              "elapsed": 0.6209163750754669,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 72.0,
+              "end": 76.0,
+              "elapsed": 0.46632304100785404,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 76.0,
+              "end": 80.0,
+              "elapsed": 0.473850333946757,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 80.0,
+              "end": 84.0,
+              "elapsed": 0.509958624956198,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 84.0,
+              "end": 88.0,
+              "elapsed": 0.5704214159632102,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 88.0,
+              "end": 92.0,
+              "elapsed": 0.5812348749022931,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 92.0,
+              "end": 96.0,
+              "elapsed": 0.5292091249721125,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 96.0,
+              "end": 100.0,
+              "elapsed": 0.5263978339498863,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 100.0,
+              "end": 104.0,
+              "elapsed": 0.589360540965572,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 104.0,
+              "end": 108.0,
+              "elapsed": 0.46752587507944554,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 108.0,
+              "end": 112.0,
+              "elapsed": 0.5326002920046449,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 112.0,
+              "end": 116.0,
+              "elapsed": 0.5087721250019968,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 116.0,
+              "end": 120.0,
+              "elapsed": 0.5705184160033241,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 120.0,
+              "end": 124.0,
+              "elapsed": 0.6100121670169756,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 124.0,
+              "end": 128.0,
+              "elapsed": 0.526617957977578,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 128.0,
+              "end": 132.0,
+              "elapsed": 0.4904747500550002,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 132.0,
+              "end": 136.0,
+              "elapsed": 0.6115823750151321,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 136.0,
+              "end": 140.0,
+              "elapsed": 0.5333849169546738,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 140.0,
+              "end": 144.0,
+              "elapsed": 0.5106338340556249,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 144.0,
+              "end": 148.0,
+              "elapsed": 0.5299206249183044,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 148.0,
+              "end": 152.0,
+              "elapsed": 0.5958273750729859,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 152.0,
+              "end": 156.0,
+              "elapsed": 0.5017944580176845,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 156.0,
+              "end": 160.0,
+              "elapsed": 0.5304020409239456,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 160.0,
+              "end": 164.0,
+              "elapsed": 0.6008405409520492,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 164.0,
+              "end": 168.0,
+              "elapsed": 0.6302798750111833,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 168.0,
+              "end": 172.0,
+              "elapsed": 0.5008241250179708,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 172.0,
+              "end": 176.0,
+              "elapsed": 0.4892510409699753,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 176.0,
+              "end": 180.0,
+              "elapsed": 0.5004753329558298,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 180.0,
+              "end": 184.0,
+              "elapsed": 0.61607287498191,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 184.0,
+              "end": 188.0,
+              "elapsed": 0.5919065419584513,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 188.0,
+              "end": 192.0,
+              "elapsed": 0.5523474159417674,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 192.0,
+              "end": 196.0,
+              "elapsed": 0.559921000036411,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 196.0,
+              "end": 200.0,
+              "elapsed": 0.5943711251020432,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 200.0,
+              "end": 204.0,
+              "elapsed": 0.48347833403386176,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 204.0,
+              "end": 208.0,
+              "elapsed": 0.46336291695479304,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 208.0,
+              "end": 212.0,
+              "elapsed": 0.5220894579542801,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 212.0,
+              "end": 216.0,
+              "elapsed": 0.4814745000330731,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 216.0,
+              "end": 220.0,
+              "elapsed": 0.5669599589891732,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 220.0,
+              "end": 224.0,
+              "elapsed": 0.5705439160810784,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 224.0,
+              "end": 228.0,
+              "elapsed": 0.5058525409549475,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 228.0,
+              "end": 232.0,
+              "elapsed": 0.5704784579575062,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 232.0,
+              "end": 236.0,
+              "elapsed": 0.5131468749605119,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 236.0,
+              "end": 240.0,
+              "elapsed": 0.4894425420789048,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 240.0,
+              "end": 244.0,
+              "elapsed": 0.4765249580377713,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 244.0,
+              "end": 248.0,
+              "elapsed": 0.4996779999928549,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 248.0,
+              "end": 252.0,
+              "elapsed": 0.5541257919976488,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 252.0,
+              "end": 256.0,
+              "elapsed": 0.5878265830688179,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 256.0,
+              "end": 260.0,
+              "elapsed": 0.5216407920233905,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 260.0,
+              "end": 264.0,
+              "elapsed": 0.594398207962513,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 264.0,
+              "end": 268.0,
+              "elapsed": 0.5031378749990836,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 268.0,
+              "end": 272.0,
+              "elapsed": 0.46388412499800324,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 272.0,
+              "end": 276.0,
+              "elapsed": 0.5731334169395268,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 276.0,
+              "end": 280.0,
+              "elapsed": 0.49714633298572153,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 280.0,
+              "end": 284.0,
+              "elapsed": 0.5449443750549108,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 284.0,
+              "end": 288.0,
+              "elapsed": 0.5818555840523914,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 288.0,
+              "end": 292.0,
+              "elapsed": 0.4875865000067279,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 292.0,
+              "end": 296.0,
+              "elapsed": 0.5258146250853315,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 296.0,
+              "end": 300.0,
+              "elapsed": 0.55271720897872,
+              "session_seconds": null,
+              "closed_sessions": null
+            }
+          ],
+          "warning": null
+        }
+      ],
+      "fingerprint": [
+        {
+          "name": "config.json",
+          "size": 7188,
+          "modified_ns": "1789233331231331019"
+        },
+        {
+          "name": "model.safetensors",
+          "size": 2463307541,
+          "modified_ns": "1789233423574360574"
+        }
+      ],
+      "recommendation": {
+        "batch_seconds": 4.0,
+        "median_sustained_rtf": 0.13362728026766343,
+        "worst_sustained_rtf": 0.13362728026766343,
+        "max_observed_queue_seconds": 0.648204917088151,
+        "keeps_up_with_headroom": true
+      }
+    },
+    {
+      "model": "parakeet-tdt-0.6b-v3",
+      "path": "/Volumes/MikeExternal/ai_models/speech-to-text-realtime/parakeet-tdt-0.6b-v3",
+      "trials": [
+        {
+          "status": "ok",
+          "native": false,
+          "batch_seconds": 4.0,
+          "load_seconds": 3.2794722500257194,
+          "session_limit_seconds": null,
+          "closed_sessions": null,
+          "audio_seconds": 300.0,
+          "first_chunk_seconds": 0.14316712506115437,
+          "sustained_rtf": 0.026706841633485228,
+          "end_to_end_rtf": 0.026829306245005378,
+          "finish_seconds": 0.00039962492883205414,
+          "max_request_seconds": 0.14316712506115437,
+          "simulated_peak_queue_seconds": 0.14316712506115437,
+          "simulated_drain_after_stop_seconds": 0.10981887497473508,
+          "queue_growth_seconds_per_wall_minute": 0.0,
+          "observed_buffer_allowance_seconds": 2,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción.",
+            "En tiempo real, necesitamos escuchar todas las palabras y",
+            "perder información cuando el sistema está ocupado. Esta prueba",
+            "utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto tiempo.",
+            "Tarda cada fragmento, si el procesamiento es más lento que la voz.",
+            "El audio pendiente seguirá aumentando. Al terminar, guardaremos.",
+            "los resultados para elegir una configuración adecuada para este",
+            "Buenos días, hoy vamos a comprobar la velocidad de la",
+            "transcripción en tiempo real, necesitamos escuchar todas las",
+            "palabras sin perder información cuando el sistema está ocupado.",
+            "Esta prueba utiliza la misma grabación para comparar los diferentes",
+            "modelos. Primero revisamos el tiempo de carga y después medimos",
+            "Cuánto tarda cada fragmento, si el procesamiento es más.",
+            "lento que la voz, el audio pendiente seguirá aumentando.",
+            "Guardaremos los resultados para elegir una configuración adecuada.",
+            "Buenos días, hoy vamos a comprobar la verificación.",
+            "De la transcripción en tiempo real, necesitamos escuchar.",
+            "Todas las palabras sin perder información cuando el sistema está operando.",
+            "Esta prueba utiliza la misma grabación para comparar los que se puede hacer.",
+            "diferentes modelos primero revisamos el tiempo de carga y",
+            "Y después medimos cuánto tarda cada fragmento, si el procesamiento",
+            "Es más lento que la voz, el audio pendiente seguirá aumentando.",
+            "Al terminar guardaremos los resultados para elegir una configuración.",
+            "Adecuada para este equipo. Buenos días. Hoy vamos a",
+            "Comprobar la velocidad de la transcripción en tiempo real, necesitamos la vida.",
+            "Esta prueba utiliza la misma grabación para",
+            "Para comparar los diferentes modelos, primero revisamos el tiempo.",
+            "Y después medimos cuánto tarda cada fragmento.",
+            "El procesamiento es más lento que la voz, el audio pendiente seguirá.",
+            "Al terminar guardaremos los resultados para elegir.",
+            "una configuración adecuada para este equipo. Buenos días.",
+            "Hoy vamos a comprobar la velocidad de la transcripción en tiempo real.",
+            "Necesitamos escuchar todas las palabras sin perder información.",
+            "cuando el sistema está ocupado. Esta prueba utiliza la misma",
+            "grabación para comparar los diferentes modelos. Primero revisar la gracia de la gracia.",
+            "El tiempo de carga y después medimos cuánto tarda cada fragmento.",
+            "Si el procesamiento es más lento que la voz, el audio pensaba.",
+            "Seguirá aumentando. Al terminar guardaremos los resultados.",
+            "para elegir una configuración adecuada para este equipo. Buenos días",
+            "días, hoy vamos a comprobar la velocidad de la transcripción en",
+            "Tiempo real, necesitamos escuchar todas las palabras sin perder.",
+            "información cuando el sistema está ocupado. Esta prueba utiliza",
+            "Utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto tarda carga.",
+            "Cada fragmento. Si el procesamiento es más lento que la voz,",
+            "El audio pendiente seguirá aumentando. Al terminar guardaremos los",
+            "los resultados para elegir una configuración adecuada para este equipo.",
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcursión.",
+            "En tiempo real, necesitamos escuchar todas las palabras.",
+            "Sin perder información cuando el sistema está ocupado. Esta",
+            "prueba utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuándo.",
+            "Cuánto tarda cada fragmento, si el procesamiento es más lento.",
+            "Que la voz, el audio pendiente seguirá aumentando. Al terminar",
+            "guardaremos los resultados para elegir una configuración adecuada para el mundo.",
+            "Buenos días, hoy vamos a comprobar la velocidad.",
+            "De la transcripción en tiempo real, necesitamos escuchar todo.",
+            "las palabras sin perder información cuando el sistema está ocupado.",
+            "Esta prueba utiliza la misma grabación para comparar los diferentes.",
+            "modelos. Primero revisamos el tiempo de carga y después",
+            "Medimos cuánto tarda cada fragmento. Si el procesamiento es",
+            "Más lento que la voz, el audio pendiente seguirá aumentando.",
+            "Al terminar guardaremos los resultados para elegir una configuración.",
+            "Adecuada para este equipo. Buenos días, hoy vamos a comprobar el equipo.",
+            "La velocidad de la transcripción en tiempo real, necesitamos",
+            "escuchar todas las palabras sin perder información cuando el sistema",
+            "Está ocupado. Esta prueba utiliza la misma grabación para comprar.",
+            "Los diferentes modelos. Primero revisamos el tiempo de",
+            "carga y después medimos cuánto tarda cada fragmento. Si el proceso de la segunda fragmentar,",
+            "Es más lento que la voz, el audio pendiente seguirá aumentando.",
+            "Al terminar guardaremos los resultados para elegir una",
+            "Configuración adecuada para este equipo. Buenos días, hoy vamos a ver.",
+            "Vamos a comprobar la velocidad de la transcripción en tiempo real."
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 4.0,
+              "elapsed": 0.14316712506115437,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 4.0,
+              "end": 8.0,
+              "elapsed": 0.09946741594467312,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 8.0,
+              "end": 12.0,
+              "elapsed": 0.10110245808027685,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 12.0,
+              "end": 16.0,
+              "elapsed": 0.10092466603964567,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 16.0,
+              "end": 20.0,
+              "elapsed": 0.10777683299966156,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 20.0,
+              "end": 24.0,
+              "elapsed": 0.11018358310684562,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 24.0,
+              "end": 28.0,
+              "elapsed": 0.10689995798747987,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 28.0,
+              "end": 32.0,
+              "elapsed": 0.11841333308257163,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 32.0,
+              "end": 36.0,
+              "elapsed": 0.10846795805264264,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 36.0,
+              "end": 40.0,
+              "elapsed": 0.10701729101128876,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 40.0,
+              "end": 44.0,
+              "elapsed": 0.09977991704363376,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 44.0,
+              "end": 48.0,
+              "elapsed": 0.10270137502811849,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 48.0,
+              "end": 52.0,
+              "elapsed": 0.10473420796915889,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 52.0,
+              "end": 56.0,
+              "elapsed": 0.10958033392671496,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 56.0,
+              "end": 60.0,
+              "elapsed": 0.10871691699139774,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 60.0,
+              "end": 64.0,
+              "elapsed": 0.11113383306656033,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 64.0,
+              "end": 68.0,
+              "elapsed": 0.11226437496952713,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 68.0,
+              "end": 72.0,
+              "elapsed": 0.10382349998690188,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 72.0,
+              "end": 76.0,
+              "elapsed": 0.11126445897389203,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 76.0,
+              "end": 80.0,
+              "elapsed": 0.11845062498468906,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 80.0,
+              "end": 84.0,
+              "elapsed": 0.10090637509711087,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 84.0,
+              "end": 88.0,
+              "elapsed": 0.10454079206101596,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 88.0,
+              "end": 92.0,
+              "elapsed": 0.11150762508623302,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 92.0,
+              "end": 96.0,
+              "elapsed": 0.10408000007737428,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 96.0,
+              "end": 100.0,
+              "elapsed": 0.11246037494856864,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 100.0,
+              "end": 104.0,
+              "elapsed": 0.10857491695787758,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 104.0,
+              "end": 108.0,
+              "elapsed": 0.10578550002537668,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 108.0,
+              "end": 112.0,
+              "elapsed": 0.10869408398866653,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 112.0,
+              "end": 116.0,
+              "elapsed": 0.10005224996712059,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 116.0,
+              "end": 120.0,
+              "elapsed": 0.10331058304291219,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 120.0,
+              "end": 124.0,
+              "elapsed": 0.106660749996081,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 124.0,
+              "end": 128.0,
+              "elapsed": 0.10684566595591605,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 128.0,
+              "end": 132.0,
+              "elapsed": 0.10748570901341736,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 132.0,
+              "end": 136.0,
+              "elapsed": 0.10402233398053795,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 136.0,
+              "end": 140.0,
+              "elapsed": 0.10445108299609274,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 140.0,
+              "end": 144.0,
+              "elapsed": 0.10450683394446969,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 144.0,
+              "end": 148.0,
+              "elapsed": 0.11649174999911338,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 148.0,
+              "end": 152.0,
+              "elapsed": 0.1078230410348624,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 152.0,
+              "end": 156.0,
+              "elapsed": 0.10920933296438307,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 156.0,
+              "end": 160.0,
+              "elapsed": 0.10656979109626263,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 160.0,
+              "end": 164.0,
+              "elapsed": 0.11096379195805639,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 164.0,
+              "end": 168.0,
+              "elapsed": 0.10834491706918925,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 168.0,
+              "end": 172.0,
+              "elapsed": 0.10653554205782712,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 172.0,
+              "end": 176.0,
+              "elapsed": 0.1039476249134168,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 176.0,
+              "end": 180.0,
+              "elapsed": 0.10423845902550966,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 180.0,
+              "end": 184.0,
+              "elapsed": 0.10551916691474617,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 184.0,
+              "end": 188.0,
+              "elapsed": 0.100173500017263,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 188.0,
+              "end": 192.0,
+              "elapsed": 0.1034477500943467,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 192.0,
+              "end": 196.0,
+              "elapsed": 0.10777733405120671,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 196.0,
+              "end": 200.0,
+              "elapsed": 0.11248020897619426,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 200.0,
+              "end": 204.0,
+              "elapsed": 0.10310741700232029,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 204.0,
+              "end": 208.0,
+              "elapsed": 0.10566620796453208,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 208.0,
+              "end": 212.0,
+              "elapsed": 0.10719345905818045,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 212.0,
+              "end": 216.0,
+              "elapsed": 0.10905175004154444,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 216.0,
+              "end": 220.0,
+              "elapsed": 0.10588062508031726,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 220.0,
+              "end": 224.0,
+              "elapsed": 0.10462883301079273,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 224.0,
+              "end": 228.0,
+              "elapsed": 0.10667579097207636,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 228.0,
+              "end": 232.0,
+              "elapsed": 0.10617008293047547,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 232.0,
+              "end": 236.0,
+              "elapsed": 0.10118966607842594,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 236.0,
+              "end": 240.0,
+              "elapsed": 0.1020413339138031,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 240.0,
+              "end": 244.0,
+              "elapsed": 0.10889304103329778,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 244.0,
+              "end": 248.0,
+              "elapsed": 0.10733558307401836,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 248.0,
+              "end": 252.0,
+              "elapsed": 0.10642179090064019,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 252.0,
+              "end": 256.0,
+              "elapsed": 0.10681037500035018,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 256.0,
+              "end": 260.0,
+              "elapsed": 0.09849145798943937,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 260.0,
+              "end": 264.0,
+              "elapsed": 0.11274458398111165,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 264.0,
+              "end": 268.0,
+              "elapsed": 0.10279412497766316,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 268.0,
+              "end": 272.0,
+              "elapsed": 0.10234662494622171,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 272.0,
+              "end": 276.0,
+              "elapsed": 0.10781520802993327,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 276.0,
+              "end": 280.0,
+              "elapsed": 0.10564258298836648,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 280.0,
+              "end": 284.0,
+              "elapsed": 0.11346399993635714,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 284.0,
+              "end": 288.0,
+              "elapsed": 0.10795537498779595,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 288.0,
+              "end": 292.0,
+              "elapsed": 0.10833550000097603,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 292.0,
+              "end": 296.0,
+              "elapsed": 0.11504033301025629,
+              "session_seconds": null,
+              "closed_sessions": null
+            },
+            {
+              "start": 296.0,
+              "end": 300.0,
+              "elapsed": 0.10941925004590303,
+              "session_seconds": null,
+              "closed_sessions": null
+            }
+          ],
+          "warning": null
+        }
+      ],
+      "fingerprint": [
+        {
+          "name": "config.json",
+          "size": 244093,
+          "modified_ns": "1789234532494594406"
+        },
+        {
+          "name": "model.safetensors",
+          "size": 2508288736,
+          "modified_ns": "1789234646490756289"
+        }
+      ],
+      "recommendation": {
+        "batch_seconds": 4.0,
+        "median_sustained_rtf": 0.026706841633485228,
+        "worst_sustained_rtf": 0.026706841633485228,
+        "max_observed_queue_seconds": 0.14316712506115437,
+        "keeps_up_with_headroom": true
+      }
+    }
+  ]
+}

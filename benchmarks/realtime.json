@@ -1,0 +1,2322 @@
+{
+  "runtime": {
+    "mlx": "0.32.2",
+    "mlx-audio": "0.5.3",
+    "numpy": "2.5.3"
+  },
+  "hardware": {
+    "hw.memsize": "25769803776",
+    "hw.model": "Mac16,12",
+    "machdep.cpu.brand_string": "Apple M4"
+  },
+  "timestamp": "2026-09-16T04:28:37.699237+00:00",
+  "machine": "macOS-26.5.1-arm64-arm-64bit",
+  "python": "3.12.13 (main, Jun 23 2026, 15:44:24) [Clang 22.1.3 ]",
+  "audio": "/Users/mike-axionomic/Documents/AI/transcriber_llm/samples/benchmark-es.wav",
+  "audio_sha256": "fb4a5eb52849b362a11b30e09f12db8a643552e3623772544b1ae187011389a6",
+  "audio_seconds": 24.0,
+  "language": "es",
+  "repeats": 2,
+  "models": [
+    {
+      "model": "Qwen3-ASR-0.6B-8bit",
+      "path": "/Volumes/MikeExternal/ai_models/speech-to-text-realtime/Qwen3-ASR-0.6B-8bit",
+      "trials": [
+        {
+          "status": "ok",
+          "native": false,
+          "batch_seconds": 4.0,
+          "load_seconds": 2.518400374916382,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 0.31180350005161017,
+          "sustained_rtf": 0.05812372084474191,
+          "end_to_end_rtf": 0.06144628124699617,
+          "finish_seconds": 0.00043283298145979643,
+          "max_request_seconds": 0.31180350005161017,
+          "simulated_peak_queue_seconds": 0.31180350005161017,
+          "simulated_drain_after_stop_seconds": 0.2506024580216035,
+          "queue_growth_seconds_per_wall_minute": 0.0,
+          "observed_buffer_allowance_seconds": 2,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción.",
+            "En tiempo real necesitamos escuchar todas las palabras.",
+            "Perder información cuando el sistema está ocupado, esta prueba.",
+            "Utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto.",
+            "Tarda cada fragmento si el procesamiento es más lento que la."
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 4.0,
+              "elapsed": 0.31180350005161017
+            },
+            {
+              "start": 4.0,
+              "end": 8.0,
+              "elapsed": 0.217528082896024
+            },
+            {
+              "start": 8.0,
+              "end": 12.0,
+              "elapsed": 0.22382799990009516
+            },
+            {
+              "start": 12.0,
+              "end": 16.0,
+              "elapsed": 0.2236124590272084
+            },
+            {
+              "start": 16.0,
+              "end": 20.0,
+              "elapsed": 0.24733625003136694
+            },
+            {
+              "start": 20.0,
+              "end": 24.0,
+              "elapsed": 0.25016962504014373
+            }
+          ],
+          "warning": null
+        },
+        {
+          "status": "ok",
+          "native": false,
+          "batch_seconds": 4.0,
+          "load_seconds": 0.8184679169207811,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 0.2992857920471579,
+          "sustained_rtf": 0.05860393334296532,
+          "end_to_end_rtf": 0.06132507466342455,
+          "finish_seconds": 0.0004373330157250166,
+          "max_request_seconds": 0.2992857920471579,
+          "simulated_peak_queue_seconds": 0.2992857920471579,
+          "simulated_drain_after_stop_seconds": 0.26283879193942994,
+          "queue_growth_seconds_per_wall_minute": 0.0,
+          "observed_buffer_allowance_seconds": 2,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción.",
+            "En tiempo real necesitamos escuchar todas las palabras.",
+            "Perder información cuando el sistema está ocupado, esta prueba.",
+            "Utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto.",
+            "Tarda cada fragmento si el procesamiento es más lento que la."
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 4.0,
+              "elapsed": 0.2992857920471579
+            },
+            {
+              "start": 4.0,
+              "end": 8.0,
+              "elapsed": 0.22004333406221122
+            },
+            {
+              "start": 8.0,
+              "end": 12.0,
+              "elapsed": 0.2206783329602331
+            },
+            {
+              "start": 12.0,
+              "end": 16.0,
+              "elapsed": 0.21897954097948968
+            },
+            {
+              "start": 16.0,
+              "end": 20.0,
+              "elapsed": 0.24997599993366748
+            },
+            {
+              "start": 20.0,
+              "end": 24.0,
+              "elapsed": 0.2624014589237049
+            }
+          ],
+          "warning": null
+        }
+      ],
+      "recommendation": {
+        "batch_seconds": 4.0,
+        "median_sustained_rtf": 0.05836382709385361,
+        "worst_sustained_rtf": 0.05860393334296532,
+        "max_observed_queue_seconds": 0.31180350005161017,
+        "keeps_up_with_headroom": true
+      },
+      "fingerprint": [
+        {
+          "name": "config.json",
+          "size": 7187,
+          "modified_ns": "1789233562625865748"
+        },
+        {
+          "name": "model.safetensors",
+          "size": 1006229426,
+          "modified_ns": "1789233835614862856"
+        }
+      ]
+    },
+    {
+      "model": "Qwen3-ASR-1.7B-8bit",
+      "path": "/Volumes/MikeExternal/ai_models/speech-to-text-realtime/Qwen3-ASR-1.7B-8bit",
+      "trials": [
+        {
+          "status": "ok",
+          "native": false,
+          "batch_seconds": 4.0,
+          "load_seconds": 3.3532873750664294,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 0.6682762919226661,
+          "sustained_rtf": 0.12960625000996515,
+          "end_to_end_rtf": 0.13587440279661678,
+          "finish_seconds": 0.0005843749968335032,
+          "max_request_seconds": 0.6682762919226661,
+          "simulated_peak_queue_seconds": 0.6682762919226661,
+          "simulated_drain_after_stop_seconds": 0.5534568330040202,
+          "queue_growth_seconds_per_wall_minute": 0.0,
+          "observed_buffer_allowance_seconds": 2,
+          "segments": [
+            "Buenos días. Hoy vamos a comprobar la velocidad de la transcripción.",
+            "en tiempo real necesitamos escuchar todas las palabras y",
+            "perder información cuando el sistema está ocupado. Esta prueba.",
+            "utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto.",
+            "tarda cada fragmento si el procesamiento es más lento que la"
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 4.0,
+              "elapsed": 0.6682762919226661
+            },
+            {
+              "start": 4.0,
+              "end": 8.0,
+              "elapsed": 0.48257729201577604
+            },
+            {
+              "start": 8.0,
+              "end": 12.0,
+              "elapsed": 0.49913037510123104
+            },
+            {
+              "start": 12.0,
+              "end": 16.0,
+              "elapsed": 0.4977394170127809
+            },
+            {
+              "start": 16.0,
+              "end": 20.0,
+              "elapsed": 0.5598054580623284
+            },
+            {
+              "start": 20.0,
+              "end": 24.0,
+              "elapsed": 0.5528724580071867
+            }
+          ],
+          "warning": null
+        },
+        {
+          "status": "ok",
+          "native": false,
+          "batch_seconds": 4.0,
+          "load_seconds": 0.9402096670819446,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 0.6371102079283446,
+          "sustained_rtf": 0.1285051853454206,
+          "end_to_end_rtf": 0.13365568740603825,
+          "finish_seconds": 0.0005225829081609845,
+          "max_request_seconds": 0.6371102079283446,
+          "simulated_peak_queue_seconds": 0.6371102079283446,
+          "simulated_drain_after_stop_seconds": 0.5309707908891141,
+          "queue_growth_seconds_per_wall_minute": 0.0,
+          "observed_buffer_allowance_seconds": 2,
+          "segments": [
+            "Buenos días. Hoy vamos a comprobar la velocidad de la transcripción.",
+            "en tiempo real necesitamos escuchar todas las palabras y",
+            "perder información cuando el sistema está ocupado. Esta prueba.",
+            "utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto.",
+            "tarda cada fragmento si el procesamiento es más lento que la"
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 4.0,
+              "elapsed": 0.6371102079283446
+            },
+            {
+              "start": 4.0,
+              "end": 8.0,
+              "elapsed": 0.48779533291235566
+            },
+            {
+              "start": 8.0,
+              "end": 12.0,
+              "elapsed": 0.5079858750104904
+            },
+            {
+              "start": 12.0,
+              "end": 16.0,
+              "elapsed": 0.4939397079870105
+            },
+            {
+              "start": 16.0,
+              "end": 20.0,
+              "elapsed": 0.5499345830176026
+            },
+            {
+              "start": 20.0,
+              "end": 24.0,
+              "elapsed": 0.5304482079809532
+            }
+          ],
+          "warning": null
+        }
+      ],
+      "recommendation": {
+        "batch_seconds": 4.0,
+        "median_sustained_rtf": 0.12905571767769286,
+        "worst_sustained_rtf": 0.12960625000996515,
+        "max_observed_queue_seconds": 0.6682762919226661,
+        "keeps_up_with_headroom": true
+      },
+      "fingerprint": [
+        {
+          "name": "config.json",
+          "size": 7188,
+          "modified_ns": "1789233331231331019"
+        },
+        {
+          "name": "model.safetensors",
+          "size": 2463307541,
+          "modified_ns": "1789233423574360574"
+        }
+      ]
+    },
+    {
+      "model": "Qwen3-ASR-1.7B-bf16",
+      "path": "/Volumes/MikeExternal/ai_models/speech-to-text-realtime/Qwen3-ASR-1.7B-bf16",
+      "trials": [
+        {
+          "status": "ok",
+          "native": false,
+          "batch_seconds": 4.0,
+          "load_seconds": 4.949613375007175,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 1.3427092920755967,
+          "sustained_rtf": 0.1987207209051121,
+          "end_to_end_rtf": 0.2215621198847657,
+          "finish_seconds": 0.0003671670565381646,
+          "max_request_seconds": 1.3427092920755967,
+          "simulated_peak_queue_seconds": 1.3427092920755967,
+          "simulated_drain_after_stop_seconds": 0.8958916671108454,
+          "queue_growth_seconds_per_wall_minute": 0.0,
+          "observed_buffer_allowance_seconds": 3,
+          "segments": [
+            "Buenos días. Hoy vamos a comprobar la velocidad de la transcripción.",
+            "en tiempo real necesitamos escuchar todas las palabras y",
+            "perder información cuando el sistema está ocupado. Esta prueba",
+            "utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto.",
+            "tarda cada fragmento si el procesamiento es más lento que la"
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 4.0,
+              "elapsed": 1.3427092920755967
+            },
+            {
+              "start": 4.0,
+              "end": 8.0,
+              "elapsed": 0.7147180419415236
+            },
+            {
+              "start": 8.0,
+              "end": 12.0,
+              "elapsed": 0.7177741250488907
+            },
+            {
+              "start": 12.0,
+              "end": 16.0,
+              "elapsed": 0.7684060840401798
+            },
+            {
+              "start": 16.0,
+              "end": 20.0,
+              "elapsed": 0.8779916670173407
+            },
+            {
+              "start": 20.0,
+              "end": 24.0,
+              "elapsed": 0.8955245000543073
+            }
+          ],
+          "warning": null
+        },
+        {
+          "status": "ok",
+          "native": false,
+          "batch_seconds": 4.0,
+          "load_seconds": 0.9674528329633176,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 1.012867874931544,
+          "sustained_rtf": 0.19613711454439908,
+          "end_to_end_rtf": 0.20568227078183554,
+          "finish_seconds": 0.0007643329445272684,
+          "max_request_seconds": 1.012867874931544,
+          "simulated_peak_queue_seconds": 1.012867874931544,
+          "simulated_drain_after_stop_seconds": 0.838006249978207,
+          "queue_growth_seconds_per_wall_minute": 0.0,
+          "observed_buffer_allowance_seconds": 3,
+          "segments": [
+            "Buenos días. Hoy vamos a comprobar la velocidad de la transcripción.",
+            "en tiempo real necesitamos escuchar todas las palabras y",
+            "perder información cuando el sistema está ocupado. Esta prueba",
+            "utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto.",
+            "tarda cada fragmento si el procesamiento es más lento que la"
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 4.0,
+              "elapsed": 1.012867874931544
+            },
+            {
+              "start": 4.0,
+              "end": 8.0,
+              "elapsed": 0.7275218749418855
+            },
+            {
+              "start": 8.0,
+              "end": 12.0,
+              "elapsed": 0.7233714159810916
+            },
+            {
+              "start": 12.0,
+              "end": 16.0,
+              "elapsed": 0.7652224579360336
+            },
+            {
+              "start": 16.0,
+              "end": 20.0,
+              "elapsed": 0.8693846249952912
+            },
+            {
+              "start": 20.0,
+              "end": 24.0,
+              "elapsed": 0.8372419170336798
+            }
+          ],
+          "warning": null
+        }
+      ],
+      "recommendation": {
+        "batch_seconds": 4.0,
+        "median_sustained_rtf": 0.1974289177247556,
+        "worst_sustained_rtf": 0.1987207209051121,
+        "max_observed_queue_seconds": 1.3427092920755967,
+        "keeps_up_with_headroom": true
+      },
+      "fingerprint": [
+        {
+          "name": "config.json",
+          "size": 6983,
+          "modified_ns": "1789233424976163017"
+        },
+        {
+          "name": "model.safetensors",
+          "size": 4076186653,
+          "modified_ns": "1789233561574229439"
+        }
+      ]
+    },
+    {
+      "model": "Qwen3-ForcedAligner-0.6B-8bit",
+      "path": "/Volumes/MikeExternal/ai_models/speech-to-text-realtime/Qwen3-ForcedAligner-0.6B-8bit",
+      "trials": [],
+      "status": "skipped",
+      "reason": "Forced aligner requires a transcript; not a live ASR model",
+      "fingerprint": [
+        {
+          "name": "config.json",
+          "size": 6940,
+          "modified_ns": "1789233836821679846"
+        },
+        {
+          "name": "model.safetensors",
+          "size": 1271924386,
+          "modified_ns": "1789233897637189038"
+        }
+      ]
+    },
+    {
+      "model": "Voxtral-Mini-4B-Realtime-2602-4bit",
+      "path": "/Volumes/MikeExternal/ai_models/speech-to-text-realtime/Voxtral-Mini-4B-Realtime-2602-4bit",
+      "trials": [
+        {
+          "status": "ok",
+          "native": true,
+          "batch_seconds": 0.5,
+          "load_seconds": 4.016387708019465,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 0.19573416700586677,
+          "sustained_rtf": 1.03105698103318,
+          "end_to_end_rtf": 1.073575074483718,
+          "finish_seconds": 1.3977595829637721,
+          "max_request_seconds": 0.7935304999118671,
+          "simulated_peak_queue_seconds": 1.1748172057559714,
+          "simulated_drain_after_stop_seconds": 2.5887992887292057,
+          "queue_growth_seconds_per_wall_minute": 1.8072898940304416,
+          "observed_buffer_allowance_seconds": null,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción en tiempo real.",
+            "Necesitamos escuchar todas las palabras sin perder información cuando el sistema está ocupado.",
+            "Esta prueba utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto tarda cada fragmento. Si el procesamiento es más lento que la voz."
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 0.5,
+              "elapsed": 0.19573416700586677
+            },
+            {
+              "start": 0.5,
+              "end": 1.0,
+              "elapsed": 0.6691443750169128
+            },
+            {
+              "start": 1.0,
+              "end": 1.5,
+              "elapsed": 0.46686350007075816
+            },
+            {
+              "start": 1.5,
+              "end": 2.0,
+              "elapsed": 0.46506233396939933
+            },
+            {
+              "start": 2.0,
+              "end": 2.5,
+              "elapsed": 0.5443551250500605
+            },
+            {
+              "start": 2.5,
+              "end": 3.0,
+              "elapsed": 0.46995679195970297
+            },
+            {
+              "start": 3.0,
+              "end": 3.5,
+              "elapsed": 0.4703454999253154
+            },
+            {
+              "start": 3.5,
+              "end": 4.0,
+              "elapsed": 0.4654407909838483
+            },
+            {
+              "start": 4.0,
+              "end": 4.5,
+              "elapsed": 0.5480648339726031
+            },
+            {
+              "start": 4.5,
+              "end": 5.0,
+              "elapsed": 0.4659225409850478
+            },
+            {
+              "start": 5.0,
+              "end": 5.5,
+              "elapsed": 0.46687237499281764
+            },
+            {
+              "start": 5.5,
+              "end": 6.0,
+              "elapsed": 0.46809033292811364
+            },
+            {
+              "start": 6.0,
+              "end": 6.5,
+              "elapsed": 0.5423867499921471
+            },
+            {
+              "start": 6.5,
+              "end": 7.0,
+              "elapsed": 0.4683890830492601
+            },
+            {
+              "start": 7.0,
+              "end": 7.5,
+              "elapsed": 0.4835693329805508
+            },
+            {
+              "start": 7.5,
+              "end": 8.0,
+              "elapsed": 0.4868046659976244
+            },
+            {
+              "start": 8.0,
+              "end": 8.5,
+              "elapsed": 0.5617054580943659
+            },
+            {
+              "start": 8.5,
+              "end": 9.0,
+              "elapsed": 0.47053333302028477
+            },
+            {
+              "start": 9.0,
+              "end": 9.5,
+              "elapsed": 0.47924845793750137
+            },
+            {
+              "start": 9.5,
+              "end": 10.0,
+              "elapsed": 0.5676439580274746
+            },
+            {
+              "start": 10.0,
+              "end": 10.5,
+              "elapsed": 0.5386944590136409
+            },
+            {
+              "start": 10.5,
+              "end": 11.0,
+              "elapsed": 0.47224795806687325
+            },
+            {
+              "start": 11.0,
+              "end": 11.5,
+              "elapsed": 0.47386820800602436
+            },
+            {
+              "start": 11.5,
+              "end": 12.0,
+              "elapsed": 0.47761741594877094
+            },
+            {
+              "start": 12.0,
+              "end": 12.5,
+              "elapsed": 0.5548633749131113
+            },
+            {
+              "start": 12.5,
+              "end": 13.0,
+              "elapsed": 0.6191283330554143
+            },
+            {
+              "start": 13.0,
+              "end": 13.5,
+              "elapsed": 0.508245208999142
+            },
+            {
+              "start": 13.5,
+              "end": 14.0,
+              "elapsed": 0.48257100000046194
+            },
+            {
+              "start": 14.0,
+              "end": 14.5,
+              "elapsed": 0.5469247919972986
+            },
+            {
+              "start": 14.5,
+              "end": 15.0,
+              "elapsed": 0.4744807919487357
+            },
+            {
+              "start": 15.0,
+              "end": 15.5,
+              "elapsed": 0.47908770793583244
+            },
+            {
+              "start": 15.5,
+              "end": 16.0,
+              "elapsed": 0.4781214169925079
+            },
+            {
+              "start": 16.0,
+              "end": 16.5,
+              "elapsed": 0.5437696669250727
+            },
+            {
+              "start": 16.5,
+              "end": 17.0,
+              "elapsed": 0.4777982500381768
+            },
+            {
+              "start": 17.0,
+              "end": 17.5,
+              "elapsed": 0.4765016669407487
+            },
+            {
+              "start": 17.5,
+              "end": 18.0,
+              "elapsed": 0.48161024996079504
+            },
+            {
+              "start": 18.0,
+              "end": 18.5,
+              "elapsed": 0.5629779159789905
+            },
+            {
+              "start": 18.5,
+              "end": 19.0,
+              "elapsed": 0.47505158302374184
+            },
+            {
+              "start": 19.0,
+              "end": 19.5,
+              "elapsed": 0.4881436669966206
+            },
+            {
+              "start": 19.5,
+              "end": 20.0,
+              "elapsed": 0.5022783329477534
+            },
+            {
+              "start": 20.0,
+              "end": 20.5,
+              "elapsed": 0.5832430410664529
+            },
+            {
+              "start": 20.5,
+              "end": 21.0,
+              "elapsed": 0.5277009159326553
+            },
+            {
+              "start": 21.0,
+              "end": 21.5,
+              "elapsed": 0.7935304999118671
+            },
+            {
+              "start": 21.5,
+              "end": 22.0,
+              "elapsed": 0.4911998340394348
+            },
+            {
+              "start": 22.0,
+              "end": 22.5,
+              "elapsed": 0.5860297080362216
+            },
+            {
+              "start": 22.5,
+              "end": 23.0,
+              "elapsed": 0.5268764160573483
+            },
+            {
+              "start": 23.0,
+              "end": 23.5,
+              "elapsed": 0.4949974169721827
+            },
+            {
+              "start": 23.5,
+              "end": 24.0,
+              "elapsed": 0.4943486669799313
+            }
+          ],
+          "warning": null
+        },
+        {
+          "status": "ok",
+          "native": true,
+          "batch_seconds": 0.5,
+          "load_seconds": 4.369306665961631,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 0.20495516702067107,
+          "sustained_rtf": 0.993769751972286,
+          "end_to_end_rtf": 1.0395086840289878,
+          "finish_seconds": 1.3963363750372082,
+          "max_request_seconds": 0.5806249589659274,
+          "simulated_peak_queue_seconds": 0.5806249589659274,
+          "simulated_drain_after_stop_seconds": 1.9772219163132831,
+          "queue_growth_seconds_per_wall_minute": 0.0,
+          "observed_buffer_allowance_seconds": 2,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción en tiempo real.",
+            "Necesitamos escuchar todas las palabras sin perder información cuando el sistema está ocupado.",
+            "Esta prueba utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto tarda cada fragmento. Si el procesamiento es más lento que la voz."
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 0.5,
+              "elapsed": 0.20495516702067107
+            },
+            {
+              "start": 0.5,
+              "end": 1.0,
+              "elapsed": 0.5806249589659274
+            },
+            {
+              "start": 1.0,
+              "end": 1.5,
+              "elapsed": 0.4760692920535803
+            },
+            {
+              "start": 1.5,
+              "end": 2.0,
+              "elapsed": 0.4793631670763716
+            },
+            {
+              "start": 2.0,
+              "end": 2.5,
+              "elapsed": 0.5262375840684399
+            },
+            {
+              "start": 2.5,
+              "end": 3.0,
+              "elapsed": 0.46431612502783537
+            },
+            {
+              "start": 3.0,
+              "end": 3.5,
+              "elapsed": 0.4690141250612214
+            },
+            {
+              "start": 3.5,
+              "end": 4.0,
+              "elapsed": 0.4758965829387307
+            },
+            {
+              "start": 4.0,
+              "end": 4.5,
+              "elapsed": 0.5522884170059115
+            },
+            {
+              "start": 4.5,
+              "end": 5.0,
+              "elapsed": 0.48065370798576623
+            },
+            {
+              "start": 5.0,
+              "end": 5.5,
+              "elapsed": 0.47734224994201213
+            },
+            {
+              "start": 5.5,
+              "end": 6.0,
+              "elapsed": 0.4718829579651356
+            },
+            {
+              "start": 6.0,
+              "end": 6.5,
+              "elapsed": 0.5333352918969467
+            },
+            {
+              "start": 6.5,
+              "end": 7.0,
+              "elapsed": 0.46670587500557303
+            },
+            {
+              "start": 7.0,
+              "end": 7.5,
+              "elapsed": 0.48216466698795557
+            },
+            {
+              "start": 7.5,
+              "end": 8.0,
+              "elapsed": 0.4676196250366047
+            },
+            {
+              "start": 8.0,
+              "end": 8.5,
+              "elapsed": 0.5383791660424322
+            },
+            {
+              "start": 8.5,
+              "end": 9.0,
+              "elapsed": 0.4883847499731928
+            },
+            {
+              "start": 9.0,
+              "end": 9.5,
+              "elapsed": 0.472148249973543
+            },
+            {
+              "start": 9.5,
+              "end": 10.0,
+              "elapsed": 0.4759550830349326
+            },
+            {
+              "start": 10.0,
+              "end": 10.5,
+              "elapsed": 0.5447847910691053
+            },
+            {
+              "start": 10.5,
+              "end": 11.0,
+              "elapsed": 0.4857996250502765
+            },
+            {
+              "start": 11.0,
+              "end": 11.5,
+              "elapsed": 0.4764371670316905
+            },
+            {
+              "start": 11.5,
+              "end": 12.0,
+              "elapsed": 0.47155429096892476
+            },
+            {
+              "start": 12.0,
+              "end": 12.5,
+              "elapsed": 0.5379889169707894
+            },
+            {
+              "start": 12.5,
+              "end": 13.0,
+              "elapsed": 0.47268375009298325
+            },
+            {
+              "start": 13.0,
+              "end": 13.5,
+              "elapsed": 0.4778972079511732
+            },
+            {
+              "start": 13.5,
+              "end": 14.0,
+              "elapsed": 0.49565354094374925
+            },
+            {
+              "start": 14.0,
+              "end": 14.5,
+              "elapsed": 0.5426052500260994
+            },
+            {
+              "start": 14.5,
+              "end": 15.0,
+              "elapsed": 0.4727046670159325
+            },
+            {
+              "start": 15.0,
+              "end": 15.5,
+              "elapsed": 0.4780383330071345
+            },
+            {
+              "start": 15.5,
+              "end": 16.0,
+              "elapsed": 0.4734252920607105
+            },
+            {
+              "start": 16.0,
+              "end": 16.5,
+              "elapsed": 0.5438118750462309
+            },
+            {
+              "start": 16.5,
+              "end": 17.0,
+              "elapsed": 0.4746541250497103
+            },
+            {
+              "start": 17.0,
+              "end": 17.5,
+              "elapsed": 0.47485200001392514
+            },
+            {
+              "start": 17.5,
+              "end": 18.0,
+              "elapsed": 0.4727983749471605
+            },
+            {
+              "start": 18.0,
+              "end": 18.5,
+              "elapsed": 0.5432846660260111
+            },
+            {
+              "start": 18.5,
+              "end": 19.0,
+              "elapsed": 0.4785350830061361
+            },
+            {
+              "start": 19.0,
+              "end": 19.5,
+              "elapsed": 0.4849854171043262
+            },
+            {
+              "start": 19.5,
+              "end": 20.0,
+              "elapsed": 0.48515508393757045
+            },
+            {
+              "start": 20.0,
+              "end": 20.5,
+              "elapsed": 0.54066787508782
+            },
+            {
+              "start": 20.5,
+              "end": 21.0,
+              "elapsed": 0.47750366700347513
+            },
+            {
+              "start": 21.0,
+              "end": 21.5,
+              "elapsed": 0.5198075830703601
+            },
+            {
+              "start": 21.5,
+              "end": 22.0,
+              "elapsed": 0.47433766699396074
+            },
+            {
+              "start": 22.0,
+              "end": 22.5,
+              "elapsed": 0.5547812910517678
+            },
+            {
+              "start": 22.5,
+              "end": 23.0,
+              "elapsed": 0.5092588330153376
+            },
+            {
+              "start": 23.0,
+              "end": 23.5,
+              "elapsed": 0.49339650000911206
+            },
+            {
+              "start": 23.5,
+              "end": 24.0,
+              "elapsed": 0.5111321250442415
+            }
+          ],
+          "warning": null
+        },
+        {
+          "status": "ok",
+          "native": true,
+          "batch_seconds": 1,
+          "load_seconds": 4.012159665930085,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 0.748551124939695,
+          "sustained_rtf": 0.9558218355407007,
+          "end_to_end_rtf": 0.9994804341113195,
+          "finish_seconds": 1.3503922499949113,
+          "max_request_seconds": 1.006883249967359,
+          "simulated_peak_queue_seconds": 1.006883249967359,
+          "simulated_drain_after_stop_seconds": 2.2635372079676017,
+          "queue_growth_seconds_per_wall_minute": 0.0,
+          "observed_buffer_allowance_seconds": 3,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción en tiempo real.",
+            "Necesitamos escuchar todas las palabras sin perder información cuando el sistema está ocupado.",
+            "Esta prueba utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto tarda cada fragmento. Si el procesamiento es más lento que la voz."
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 1.0,
+              "elapsed": 0.748551124939695
+            },
+            {
+              "start": 1.0,
+              "end": 2.0,
+              "elapsed": 0.9012196249095723
+            },
+            {
+              "start": 2.0,
+              "end": 3.0,
+              "elapsed": 0.9669494159752503
+            },
+            {
+              "start": 3.0,
+              "end": 4.0,
+              "elapsed": 0.9039812920382246
+            },
+            {
+              "start": 4.0,
+              "end": 5.0,
+              "elapsed": 0.9845084589906037
+            },
+            {
+              "start": 5.0,
+              "end": 6.0,
+              "elapsed": 0.9160878749098629
+            },
+            {
+              "start": 6.0,
+              "end": 7.0,
+              "elapsed": 0.9835277089150622
+            },
+            {
+              "start": 7.0,
+              "end": 8.0,
+              "elapsed": 0.9411091249203309
+            },
+            {
+              "start": 8.0,
+              "end": 9.0,
+              "elapsed": 1.0021778750233352
+            },
+            {
+              "start": 9.0,
+              "end": 10.0,
+              "elapsed": 0.9425030829152092
+            },
+            {
+              "start": 10.0,
+              "end": 11.0,
+              "elapsed": 1.001734875026159
+            },
+            {
+              "start": 11.0,
+              "end": 12.0,
+              "elapsed": 0.9240691249724478
+            },
+            {
+              "start": 12.0,
+              "end": 13.0,
+              "elapsed": 0.9805284170433879
+            },
+            {
+              "start": 13.0,
+              "end": 14.0,
+              "elapsed": 0.9152565419208258
+            },
+            {
+              "start": 14.0,
+              "end": 15.0,
+              "elapsed": 1.006883249967359
+            },
+            {
+              "start": 15.0,
+              "end": 16.0,
+              "elapsed": 0.9112454999703914
+            },
+            {
+              "start": 16.0,
+              "end": 17.0,
+              "elapsed": 0.9819250421132892
+            },
+            {
+              "start": 17.0,
+              "end": 18.0,
+              "elapsed": 0.911924667074345
+            },
+            {
+              "start": 18.0,
+              "end": 19.0,
+              "elapsed": 0.9797186250798404
+            },
+            {
+              "start": 19.0,
+              "end": 20.0,
+              "elapsed": 0.9128229579655454
+            },
+            {
+              "start": 20.0,
+              "end": 21.0,
+              "elapsed": 0.9949352920521051
+            },
+            {
+              "start": 21.0,
+              "end": 22.0,
+              "elapsed": 0.9308154589962214
+            },
+            {
+              "start": 22.0,
+              "end": 23.0,
+              "elapsed": 0.981517874985002
+            },
+            {
+              "start": 23.0,
+              "end": 24.0,
+              "elapsed": 0.9131449579726905
+            }
+          ],
+          "warning": null
+        },
+        {
+          "status": "ok",
+          "native": true,
+          "batch_seconds": 1,
+          "load_seconds": 2.2304648749995977,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 0.7471084999851882,
+          "sustained_rtf": 0.9518837727548088,
+          "end_to_end_rtf": 0.9989012550892463,
+          "finish_seconds": 1.3973083749879152,
+          "max_request_seconds": 1.0074533330043778,
+          "simulated_peak_queue_seconds": 1.0074533330043778,
+          "simulated_drain_after_stop_seconds": 2.323634290951304,
+          "queue_growth_seconds_per_wall_minute": 0.0,
+          "observed_buffer_allowance_seconds": 3,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción en tiempo real.",
+            "Necesitamos escuchar todas las palabras sin perder información cuando el sistema está ocupado.",
+            "Esta prueba utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto tarda cada fragmento. Si el procesamiento es más lento que la voz."
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 1.0,
+              "elapsed": 0.7471084999851882
+            },
+            {
+              "start": 1.0,
+              "end": 2.0,
+              "elapsed": 0.9194745840504766
+            },
+            {
+              "start": 2.0,
+              "end": 3.0,
+              "elapsed": 0.974446167005226
+            },
+            {
+              "start": 3.0,
+              "end": 4.0,
+              "elapsed": 0.8976170410169289
+            },
+            {
+              "start": 4.0,
+              "end": 5.0,
+              "elapsed": 0.9826648330781609
+            },
+            {
+              "start": 5.0,
+              "end": 6.0,
+              "elapsed": 0.8976597080472857
+            },
+            {
+              "start": 6.0,
+              "end": 7.0,
+              "elapsed": 0.9753067080164328
+            },
+            {
+              "start": 7.0,
+              "end": 8.0,
+              "elapsed": 0.9086900410475209
+            },
+            {
+              "start": 8.0,
+              "end": 9.0,
+              "elapsed": 0.9747096670325845
+            },
+            {
+              "start": 9.0,
+              "end": 10.0,
+              "elapsed": 0.9082002500072122
+            },
+            {
+              "start": 10.0,
+              "end": 11.0,
+              "elapsed": 1.0074533330043778
+            },
+            {
+              "start": 11.0,
+              "end": 12.0,
+              "elapsed": 0.9150646660709754
+            },
+            {
+              "start": 12.0,
+              "end": 13.0,
+              "elapsed": 0.9828937919810414
+            },
+            {
+              "start": 13.0,
+              "end": 14.0,
+              "elapsed": 0.9190909169847146
+            },
+            {
+              "start": 14.0,
+              "end": 15.0,
+              "elapsed": 0.9827640830771998
+            },
+            {
+              "start": 15.0,
+              "end": 16.0,
+              "elapsed": 0.9147992909420282
+            },
+            {
+              "start": 16.0,
+              "end": 17.0,
+              "elapsed": 0.9864404159598053
+            },
+            {
+              "start": 17.0,
+              "end": 18.0,
+              "elapsed": 0.9412852498935536
+            },
+            {
+              "start": 18.0,
+              "end": 19.0,
+              "elapsed": 0.984309499966912
+            },
+            {
+              "start": 19.0,
+              "end": 20.0,
+              "elapsed": 0.9242971249623224
+            },
+            {
+              "start": 20.0,
+              "end": 21.0,
+              "elapsed": 0.9876905840355903
+            },
+            {
+              "start": 21.0,
+              "end": 22.0,
+              "elapsed": 0.928133208071813
+            },
+            {
+              "start": 22.0,
+              "end": 23.0,
+              "elapsed": 0.9898961669532582
+            },
+            {
+              "start": 23.0,
+              "end": 24.0,
+              "elapsed": 0.926325915963389
+            }
+          ],
+          "warning": null
+        },
+        {
+          "status": "ok",
+          "native": true,
+          "batch_seconds": 2,
+          "load_seconds": 2.277048417017795,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 1.7044200409436598,
+          "sustained_rtf": 0.9773826041608118,
+          "end_to_end_rtf": 1.0233404374691115,
+          "finish_seconds": 1.4010035831015557,
+          "max_request_seconds": 2.1008817909751087,
+          "simulated_peak_queue_seconds": 2.1111703329952434,
+          "simulated_drain_after_stop_seconds": 3.4295942082535475,
+          "queue_growth_seconds_per_wall_minute": 0.0,
+          "observed_buffer_allowance_seconds": 4,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción en tiempo real.",
+            "Necesitamos escuchar todas las palabras sin perder información cuando el sistema está ocupado.",
+            "Esta prueba utiliza la misma grabación para comparar los diferentes modelos. Primero revisamos el tiempo de carga y después medimos cuánto tarda cada fragmento. Si el procesamiento es más lento que la voz."
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 2.0,
+              "elapsed": 1.7044200409436598
+            },
+            {
+              "start": 2.0,
+              "end": 4.0,
+              "elapsed": 1.907094791997224
+            },
+            {
+              "start": 4.0,
+              "end": 6.0,
+              "elapsed": 1.9072311660274863
+            },
+            {
+              "start": 6.0,
+              "end": 8.0,
+              "elapsed": 1.868912292062305
+            },
+            {
+              "start": 8.0,
+              "end": 10.0,
+              "elapsed": 1.8956841659964994
+            },
+            {
+              "start": 10.0,
+              "end": 12.0,
+              "elapsed": 1.9207767089828849
+            },
+            {
+              "start": 12.0,
+              "end": 14.0,
+              "elapsed": 1.9264571249950677
+            },
+            {
+              "start": 14.0,
+              "end": 16.0,
+              "elapsed": 2.0102885420201346
+            },
+            {
+              "start": 16.0,
+              "end": 18.0,
+              "elapsed": 2.1008817909751087
+            },
+            {
+              "start": 18.0,
+              "end": 20.0,
+              "elapsed": 1.9636693340726197
+            },
+            {
+              "start": 20.0,
+              "end": 22.0,
+              "elapsed": 2.0089200830552727
+            },
+            {
+              "start": 22.0,
+              "end": 24.0,
+              "elapsed": 1.944830875028856
+            }
+          ],
+          "warning": null
+        },
+        {
+          "status": "ok",
+          "native": true,
+          "batch_seconds": 2,
+          "load_seconds": 1.0725597080308944,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 1.6946927080862224,
+          "sustained_rtf": 1.034362014598446,
+          "end_to_end_rtf": 1.075934659752723,
+          "finish_seconds": 1.4919470419408754,
+          "max_request_seconds": 2.2208606250351295,
+          "simulated_peak_queue_seconds": 2.475653750007041,
+          "simulated_drain_after_stop_seconds": 4.230004916898906,
+          "queue_growth_seconds_per_wall_minute": 1.9932294949047868,
+          "observed_buffer_allowance_seconds": null,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción en tiempo real.",
+            "Necesitamos escuchar todas las palabras sin perder información cuando el sistema está ocupado.",
+            "Esta prueba utiliza la misma grabación para comparar los diferentes modelos. Primero revisamos el tiempo de carga y después medimos cuánto tarda cada fragmento. Si el procesamiento es más lento que la voz."
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 2.0,
+              "elapsed": 1.6946927080862224
+            },
+            {
+              "start": 2.0,
+              "end": 4.0,
+              "elapsed": 1.9485517920693383
+            },
+            {
+              "start": 4.0,
+              "end": 6.0,
+              "elapsed": 1.9491824170108885
+            },
+            {
+              "start": 6.0,
+              "end": 8.0,
+              "elapsed": 2.0503712909994647
+            },
+            {
+              "start": 8.0,
+              "end": 10.0,
+              "elapsed": 2.0072805419331416
+            },
+            {
+              "start": 10.0,
+              "end": 12.0,
+              "elapsed": 1.9977937920484692
+            },
+            {
+              "start": 12.0,
+              "end": 14.0,
+              "elapsed": 2.181307666003704
+            },
+            {
+              "start": 14.0,
+              "end": 16.0,
+              "elapsed": 2.1291597089730203
+            },
+            {
+              "start": 16.0,
+              "end": 18.0,
+              "elapsed": 2.041215750039555
+            },
+            {
+              "start": 18.0,
+              "end": 20.0,
+              "elapsed": 2.0685250000096858
+            },
+            {
+              "start": 20.0,
+              "end": 22.0,
+              "elapsed": 2.0415434999158606
+            },
+            {
+              "start": 22.0,
+              "end": 24.0,
+              "elapsed": 2.2208606250351295
+            }
+          ],
+          "warning": null
+        },
+        {
+          "status": "ok",
+          "native": true,
+          "batch_seconds": 4,
+          "load_seconds": 1.3765512499958277,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 3.7032015840522945,
+          "sustained_rtf": 1.1592003417026717,
+          "end_to_end_rtf": 1.1905475521295255,
+          "finish_seconds": 1.6859328330028802,
+          "max_request_seconds": 4.965796042000875,
+          "simulated_peak_queue_seconds": 5.8242504600202665,
+          "simulated_drain_after_stop_seconds": 8.869939667056315,
+          "queue_growth_seconds_per_wall_minute": 8.240180888947965,
+          "observed_buffer_allowance_seconds": null,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción en tiempo real. Necesitamos escuchar todas las palabras sin perder información cuando el sistema está ocupado.",
+            "Esta prueba utiliza la misma grabación para comparar los diferentes modelos. Primero revisamos el tiempo de carga y después medimos cuánto tarda cada fragmento. Si el procesamiento es más lento que la voz."
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 4.0,
+              "elapsed": 3.7032015840522945
+            },
+            {
+              "start": 4.0,
+              "end": 8.0,
+              "elapsed": 4.379349834052846
+            },
+            {
+              "start": 8.0,
+              "end": 12.0,
+              "elapsed": 4.965796042000875
+            },
+            {
+              "start": 12.0,
+              "end": 16.0,
+              "elapsed": 4.479104583966546
+            },
+            {
+              "start": 16.0,
+              "end": 20.0,
+              "elapsed": 4.613626708043739
+            },
+            {
+              "start": 20.0,
+              "end": 24.0,
+              "elapsed": 4.746129665989429
+            }
+          ],
+          "warning": null
+        },
+        {
+          "status": "ok",
+          "native": true,
+          "batch_seconds": 4,
+          "load_seconds": 1.0565440410282463,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 4.361988291959278,
+          "sustained_rtf": 1.1766463354520966,
+          "end_to_end_rtf": 1.2376069722522516,
+          "finish_seconds": 1.807652333052829,
+          "max_request_seconds": 4.827535709016956,
+          "simulated_peak_queue_seconds": 6.495262251002714,
+          "simulated_drain_after_stop_seconds": 9.702567334054038,
+          "queue_growth_seconds_per_wall_minute": 9.007617503906541,
+          "observed_buffer_allowance_seconds": null,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción en tiempo real. Necesitamos escuchar todas las palabras sin perder información cuando el sistema está ocupado.",
+            "Esta prueba utiliza la misma grabación para comparar los diferentes modelos. Primero revisamos el tiempo de carga y después medimos cuánto tarda cada fragmento. Si el procesamiento es más lento que la voz."
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 4.0,
+              "elapsed": 4.361988291959278
+            },
+            {
+              "start": 4.0,
+              "end": 8.0,
+              "elapsed": 4.6940689160255715
+            },
+            {
+              "start": 8.0,
+              "end": 12.0,
+              "elapsed": 4.611669334000908
+            },
+            {
+              "start": 12.0,
+              "end": 16.0,
+              "elapsed": 4.827535709016956
+            },
+            {
+              "start": 16.0,
+              "end": 20.0,
+              "elapsed": 4.577916375012137
+            },
+            {
+              "start": 20.0,
+              "end": 24.0,
+              "elapsed": 4.821736374986358
+            }
+          ],
+          "warning": null
+        }
+      ],
+      "recommendation": {
+        "batch_seconds": 1.0,
+        "median_sustained_rtf": 0.41971162474357243,
+        "worst_sustained_rtf": 0.4377075698650662,
+        "max_observed_queue_seconds": 1.8449640839826316,
+        "keeps_up_with_headroom": true
+      },
+      "fingerprint": [
+        {
+          "name": "config.json",
+          "size": 1513,
+          "modified_ns": "1789233898773077314"
+        },
+        {
+          "name": "model.safetensors",
+          "size": 3133798126,
+          "modified_ns": "1789234013721997895"
+        }
+      ],
+      "short_benchmark_recommendation": {
+        "batch_seconds": 1,
+        "median_sustained_rtf": 0.9538528041477548,
+        "worst_sustained_rtf": 0.9558218355407007,
+        "max_observed_queue_seconds": 1.0074533330043778,
+        "keeps_up_with_headroom": false
+      },
+      "long_run_validation": {
+        "audio_seconds": 300.0,
+        "sustained_rtf": 0.4377075698650662,
+        "closed_sessions": 15,
+        "session_limit_seconds": 20.0,
+        "batch_seconds": 1.0,
+        "optimization": {
+          "layout": "voxtral-4bit-bf16-v1",
+          "converted_layers": [
+            "encoder.audio_language_projection_0",
+            "encoder.audio_language_projection_2",
+            "decoder.tok_embeddings"
+          ],
+          "dtype_changed": true
+        }
+      },
+      "legacy_layout_validation": {
+        "audio_seconds": 120.0,
+        "sustained_rtf": 1.3907483574083268,
+        "closed_sessions": 6,
+        "session_limit_seconds": 20.0,
+        "batch_seconds": 1.0
+      }
+    },
+    {
+      "model": "Voxtral-Mini-4B-Realtime-2602-fp16",
+      "path": "/Volumes/MikeExternal/ai_models/speech-to-text-realtime/Voxtral-Mini-4B-Realtime-2602-fp16",
+      "trials": [
+        {
+          "status": "ok",
+          "native": true,
+          "batch_seconds": 0.5,
+          "load_seconds": 10.074212791980244,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 0.7597395420307294,
+          "sustained_rtf": 6.2516642540053,
+          "end_to_end_rtf": 6.501045831508236,
+          "finish_seconds": 7.7934538329718634,
+          "max_request_seconds": 5.374381875037216,
+          "simulated_peak_queue_seconds": 19.698361043119803,
+          "simulated_drain_after_stop_seconds": 132.52509995619766,
+          "queue_growth_seconds_per_wall_minute": 50.4025556136417,
+          "observed_buffer_allowance_seconds": null,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción en tiempo real.",
+            "Necesitamos escuchar todas las palabras sin perder información cuando el sistema está ocupado.",
+            "Esta prueba utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto tarda cada fragmento. Si el procesamiento es más lento que la voz,"
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 0.5,
+              "elapsed": 0.7597395420307294
+            },
+            {
+              "start": 0.5,
+              "end": 1.0,
+              "elapsed": 5.272479332983494
+            },
+            {
+              "start": 1.0,
+              "end": 1.5,
+              "elapsed": 2.6646340830484405
+            },
+            {
+              "start": 1.5,
+              "end": 2.0,
+              "elapsed": 2.3690343339694664
+            },
+            {
+              "start": 2.0,
+              "end": 2.5,
+              "elapsed": 3.6592783340020105
+            },
+            {
+              "start": 2.5,
+              "end": 3.0,
+              "elapsed": 2.8460763749899343
+            },
+            {
+              "start": 3.0,
+              "end": 3.5,
+              "elapsed": 2.6522790420567617
+            },
+            {
+              "start": 3.5,
+              "end": 4.0,
+              "elapsed": 2.9748400000389665
+            },
+            {
+              "start": 4.0,
+              "end": 4.5,
+              "elapsed": 3.081852708943188
+            },
+            {
+              "start": 4.5,
+              "end": 5.0,
+              "elapsed": 2.743425374967046
+            },
+            {
+              "start": 5.0,
+              "end": 5.5,
+              "elapsed": 2.9038865419570357
+            },
+            {
+              "start": 5.5,
+              "end": 6.0,
+              "elapsed": 2.8426886670058593
+            },
+            {
+              "start": 6.0,
+              "end": 6.5,
+              "elapsed": 3.3070937920128927
+            },
+            {
+              "start": 6.5,
+              "end": 7.0,
+              "elapsed": 3.374369208002463
+            },
+            {
+              "start": 7.0,
+              "end": 7.5,
+              "elapsed": 3.218187917023897
+            },
+            {
+              "start": 7.5,
+              "end": 8.0,
+              "elapsed": 2.868417749996297
+            },
+            {
+              "start": 8.0,
+              "end": 8.5,
+              "elapsed": 3.671718667028472
+            },
+            {
+              "start": 8.5,
+              "end": 9.0,
+              "elapsed": 5.374381875037216
+            },
+            {
+              "start": 9.0,
+              "end": 9.5,
+              "elapsed": 3.582669333089143
+            },
+            {
+              "start": 9.5,
+              "end": 10.0,
+              "elapsed": 3.0716680829646066
+            },
+            {
+              "start": 10.0,
+              "end": 10.5,
+              "elapsed": 3.441363000078127
+            },
+            {
+              "start": 10.5,
+              "end": 11.0,
+              "elapsed": 2.894400165998377
+            },
+            {
+              "start": 11.0,
+              "end": 11.5,
+              "elapsed": 2.86244254198391
+            },
+            {
+              "start": 11.5,
+              "end": 12.0,
+              "elapsed": 2.9799774579005316
+            },
+            {
+              "start": 12.0,
+              "end": 12.5,
+              "elapsed": 3.3382410829653963
+            },
+            {
+              "start": 12.5,
+              "end": 13.0,
+              "elapsed": 3.5324711659923196
+            },
+            {
+              "start": 13.0,
+              "end": 13.5,
+              "elapsed": 3.3657177080167457
+            },
+            {
+              "start": 13.5,
+              "end": 14.0,
+              "elapsed": 2.93148749996908
+            },
+            {
+              "start": 14.0,
+              "end": 14.5,
+              "elapsed": 3.196692750090733
+            },
+            {
+              "start": 14.5,
+              "end": 15.0,
+              "elapsed": 2.725325041101314
+            },
+            {
+              "start": 15.0,
+              "end": 15.5,
+              "elapsed": 2.8774120829766616
+            },
+            {
+              "start": 15.5,
+              "end": 16.0,
+              "elapsed": 2.7172802080167457
+            },
+            {
+              "start": 16.0,
+              "end": 16.5,
+              "elapsed": 3.299440832925029
+            },
+            {
+              "start": 16.5,
+              "end": 17.0,
+              "elapsed": 3.623552333097905
+            },
+            {
+              "start": 17.0,
+              "end": 17.5,
+              "elapsed": 2.747416832949966
+            },
+            {
+              "start": 17.5,
+              "end": 18.0,
+              "elapsed": 2.845344000030309
+            },
+            {
+              "start": 18.0,
+              "end": 18.5,
+              "elapsed": 3.1503547920146957
+            },
+            {
+              "start": 18.5,
+              "end": 19.0,
+              "elapsed": 2.8843011669814587
+            },
+            {
+              "start": 19.0,
+              "end": 19.5,
+              "elapsed": 2.869911332963966
+            },
+            {
+              "start": 19.5,
+              "end": 20.0,
+              "elapsed": 2.75613999995403
+            },
+            {
+              "start": 20.0,
+              "end": 20.5,
+              "elapsed": 3.181727375020273
+            },
+            {
+              "start": 20.5,
+              "end": 21.0,
+              "elapsed": 3.034642416983843
+            },
+            {
+              "start": 21.0,
+              "end": 21.5,
+              "elapsed": 3.1501362080452964
+            },
+            {
+              "start": 21.5,
+              "end": 22.0,
+              "elapsed": 2.952510542003438
+            },
+            {
+              "start": 22.0,
+              "end": 22.5,
+              "elapsed": 3.2691226250026375
+            },
+            {
+              "start": 22.5,
+              "end": 23.0,
+              "elapsed": 2.7588499159319326
+            },
+            {
+              "start": 23.0,
+              "end": 23.5,
+              "elapsed": 2.7951115830801427
+            },
+            {
+              "start": 23.5,
+              "end": 24.0,
+              "elapsed": 2.8115525000030175
+            }
+          ],
+          "warning": null
+        },
+        {
+          "status": "ok",
+          "native": true,
+          "batch_seconds": 0.5,
+          "load_seconds": 10.559390250011347,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 0.4644831250188872,
+          "sustained_rtf": 6.071943330997601,
+          "end_to_end_rtf": 6.144441824333626,
+          "finish_seconds": 7.753246082924306,
+          "max_request_seconds": 3.467894583940506,
+          "simulated_peak_queue_seconds": 19.0,
+          "simulated_drain_after_stop_seconds": 124.00212065898813,
+          "queue_growth_seconds_per_wall_minute": 50.11848485250237,
+          "observed_buffer_allowance_seconds": null,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción en tiempo real.",
+            "Necesitamos escuchar todas las palabras sin perder información cuando el sistema está ocupado.",
+            "Esta prueba utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto tarda cada fragmento. Si el procesamiento es más lento que la voz,"
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 0.5,
+              "elapsed": 0.4644831250188872
+            },
+            {
+              "start": 0.5,
+              "end": 1.0,
+              "elapsed": 2.5498704159399495
+            },
+            {
+              "start": 1.0,
+              "end": 1.5,
+              "elapsed": 2.3045728750294074
+            },
+            {
+              "start": 1.5,
+              "end": 2.0,
+              "elapsed": 2.2878844579681754
+            },
+            {
+              "start": 2.0,
+              "end": 2.5,
+              "elapsed": 3.137404458015226
+            },
+            {
+              "start": 2.5,
+              "end": 3.0,
+              "elapsed": 2.466519333072938
+            },
+            {
+              "start": 3.0,
+              "end": 3.5,
+              "elapsed": 2.5703412500442937
+            },
+            {
+              "start": 3.5,
+              "end": 4.0,
+              "elapsed": 2.493415166041814
+            },
+            {
+              "start": 4.0,
+              "end": 4.5,
+              "elapsed": 3.075453333090991
+            },
+            {
+              "start": 4.5,
+              "end": 5.0,
+              "elapsed": 3.158426749985665
+            },
+            {
+              "start": 5.0,
+              "end": 5.5,
+              "elapsed": 2.8452151250094175
+            },
+            {
+              "start": 5.5,
+              "end": 6.0,
+              "elapsed": 2.9185076659778133
+            },
+            {
+              "start": 6.0,
+              "end": 6.5,
+              "elapsed": 3.2302831660490483
+            },
+            {
+              "start": 6.5,
+              "end": 7.0,
+              "elapsed": 2.711816416005604
+            },
+            {
+              "start": 7.0,
+              "end": 7.5,
+              "elapsed": 2.6796796249691397
+            },
+            {
+              "start": 7.5,
+              "end": 8.0,
+              "elapsed": 2.7317853330168873
+            },
+            {
+              "start": 8.0,
+              "end": 8.5,
+              "elapsed": 3.1380468340357766
+            },
+            {
+              "start": 8.5,
+              "end": 9.0,
+              "elapsed": 2.7311965000117198
+            },
+            {
+              "start": 9.0,
+              "end": 9.5,
+              "elapsed": 3.0443833339959383
+            },
+            {
+              "start": 9.5,
+              "end": 10.0,
+              "elapsed": 3.255576791940257
+            },
+            {
+              "start": 10.0,
+              "end": 10.5,
+              "elapsed": 3.467894583940506
+            },
+            {
+              "start": 10.5,
+              "end": 11.0,
+              "elapsed": 2.8442055829800665
+            },
+            {
+              "start": 11.0,
+              "end": 11.5,
+              "elapsed": 3.0497470420086756
+            },
+            {
+              "start": 11.5,
+              "end": 12.0,
+              "elapsed": 3.046185333048925
+            },
+            {
+              "start": 12.0,
+              "end": 12.5,
+              "elapsed": 3.29989983397536
+            },
+            {
+              "start": 12.5,
+              "end": 13.0,
+              "elapsed": 3.0921929159667343
+            },
+            {
+              "start": 13.0,
+              "end": 13.5,
+              "elapsed": 3.3913243749411777
+            },
+            {
+              "start": 13.5,
+              "end": 14.0,
+              "elapsed": 2.7341673329938203
+            },
+            {
+              "start": 14.0,
+              "end": 14.5,
+              "elapsed": 3.1415906249312684
+            },
+            {
+              "start": 14.5,
+              "end": 15.0,
+              "elapsed": 2.821616749977693
+            },
+            {
+              "start": 15.0,
+              "end": 15.5,
+              "elapsed": 3.4158254159847274
+            },
+            {
+              "start": 15.5,
+              "end": 16.0,
+              "elapsed": 2.7969097500899807
+            },
+            {
+              "start": 16.0,
+              "end": 16.5,
+              "elapsed": 3.2703836250584573
+            },
+            {
+              "start": 16.5,
+              "end": 17.0,
+              "elapsed": 2.740983707946725
+            },
+            {
+              "start": 17.0,
+              "end": 17.5,
+              "elapsed": 3.3141349999932572
+            },
+            {
+              "start": 17.5,
+              "end": 18.0,
+              "elapsed": 2.7850631669862196
+            },
+            {
+              "start": 18.0,
+              "end": 18.5,
+              "elapsed": 3.3381236660061404
+            },
+            {
+              "start": 18.5,
+              "end": 19.0,
+              "elapsed": 3.282408499973826
+            },
+            {
+              "start": 19.0,
+              "end": 19.5,
+              "elapsed": 2.8452987920027226
+            },
+            {
+              "start": 19.5,
+              "end": 20.0,
+              "elapsed": 2.8987213330110535
+            },
+            {
+              "start": 20.0,
+              "end": 20.5,
+              "elapsed": 3.441613666014746
+            },
+            {
+              "start": 20.5,
+              "end": 21.0,
+              "elapsed": 2.988403750001453
+            },
+            {
+              "start": 21.0,
+              "end": 21.5,
+              "elapsed": 3.4415291249752045
+            },
+            {
+              "start": 21.5,
+              "end": 22.0,
+              "elapsed": 2.6961474580457434
+            },
+            {
+              "start": 22.0,
+              "end": 22.5,
+              "elapsed": 3.193190708057955
+            },
+            {
+              "start": 22.5,
+              "end": 23.0,
+              "elapsed": 2.8882026659557596
+            },
+            {
+              "start": 23.0,
+              "end": 23.5,
+              "elapsed": 2.7989992910297588
+            },
+            {
+              "start": 23.5,
+              "end": 24.0,
+              "elapsed": 2.8937317499658093
+            }
+          ],
+          "warning": null
+        }
+      ],
+      "recommendation": {
+        "batch_seconds": 0.5,
+        "median_sustained_rtf": 6.16180379250145,
+        "worst_sustained_rtf": 6.2516642540053,
+        "max_observed_queue_seconds": 19.698361043119803,
+        "keeps_up_with_headroom": false
+      },
+      "fingerprint": [
+        {
+          "name": "config.json",
+          "size": 1118,
+          "modified_ns": "1789234173415448960"
+        },
+        {
+          "name": "model.safetensors",
+          "size": 8870608794,
+          "modified_ns": "1789234531421737703"
+        }
+      ],
+      "sweep_note": "Additional feed sizes not tested: every baseline run exceeded 2 RTF. Use --max-sweep-rtf 0 --resume for a full sweep."
+    },
+    {
+      "model": "Voxtral-Mini-4B-Realtime-6bit",
+      "path": "/Volumes/MikeExternal/ai_models/speech-to-text-realtime/Voxtral-Mini-4B-Realtime-6bit",
+      "trials": [],
+      "status": "skipped",
+      "reason": "voxmlx conversion is incompatible with the app's mlx-audio live bridge",
+      "fingerprint": [
+        {
+          "name": "config.json",
+          "size": 1725,
+          "modified_ns": "1789234014966508398"
+        },
+        {
+          "name": "model.safetensors",
+          "size": 3609304614,
+          "modified_ns": "1789234172334196491"
+        }
+      ]
+    },
+    {
+      "model": "parakeet-tdt-0.6b-v3",
+      "path": "/Volumes/MikeExternal/ai_models/speech-to-text-realtime/parakeet-tdt-0.6b-v3",
+      "trials": [
+        {
+          "status": "ok",
+          "native": false,
+          "batch_seconds": 4.0,
+          "load_seconds": 3.806523042032495,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 1.5949492920190096,
+          "sustained_rtf": 0.02458521234220825,
+          "end_to_end_rtf": 0.08696033324425419,
+          "finish_seconds": 0.0003944589989259839,
+          "max_request_seconds": 1.5949492920190096,
+          "simulated_peak_queue_seconds": 1.5949492920190096,
+          "simulated_drain_after_stop_seconds": 0.10381262504961342,
+          "queue_growth_seconds_per_wall_minute": 0.0,
+          "observed_buffer_allowance_seconds": 3,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción.",
+            "En tiempo real, necesitamos escuchar todas las palabras y",
+            "perder información cuando el sistema está ocupado. Esta prueba",
+            "utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto tiempo.",
+            "Tarda cada fragmento, si el procesamiento es más lento que la voz."
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 4.0,
+              "elapsed": 1.5949492920190096
+            },
+            {
+              "start": 4.0,
+              "end": 8.0,
+              "elapsed": 0.09339483291842043
+            },
+            {
+              "start": 8.0,
+              "end": 12.0,
+              "elapsed": 0.09568616596516222
+            },
+            {
+              "start": 12.0,
+              "end": 16.0,
+              "elapsed": 0.09770054090768099
+            },
+            {
+              "start": 16.0,
+              "end": 20.0,
+              "elapsed": 0.10150454100221395
+            },
+            {
+              "start": 20.0,
+              "end": 24.0,
+              "elapsed": 0.10341816605068743
+            }
+          ],
+          "warning": null
+        },
+        {
+          "status": "ok",
+          "native": false,
+          "batch_seconds": 4.0,
+          "load_seconds": 0.7851298750611022,
+          "audio_seconds": 24.0,
+          "first_chunk_seconds": 0.13269679190125316,
+          "sustained_rtf": 0.025558366597397252,
+          "end_to_end_rtf": 0.026844911408261396,
+          "finish_seconds": 0.0004137499490752816,
+          "max_request_seconds": 0.13269679190125316,
+          "simulated_peak_queue_seconds": 0.13269679190125316,
+          "simulated_drain_after_stop_seconds": 0.10970479086972773,
+          "queue_growth_seconds_per_wall_minute": 0.0,
+          "observed_buffer_allowance_seconds": 2,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción.",
+            "En tiempo real, necesitamos escuchar todas las palabras y",
+            "perder información cuando el sistema está ocupado. Esta prueba",
+            "utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto tiempo.",
+            "Tarda cada fragmento, si el procesamiento es más lento que la voz."
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 4.0,
+              "elapsed": 0.13269679190125316
+            },
+            {
+              "start": 4.0,
+              "end": 8.0,
+              "elapsed": 0.09786900004837662
+            },
+            {
+              "start": 8.0,
+              "end": 12.0,
+              "elapsed": 0.10108841699548066
+            },
+            {
+              "start": 12.0,
+              "end": 16.0,
+              "elapsed": 0.0992576660355553
+            },
+            {
+              "start": 16.0,
+              "end": 20.0,
+              "elapsed": 0.10366120794788003
+            },
+            {
+              "start": 20.0,
+              "end": 24.0,
+              "elapsed": 0.10929104092065245
+            }
+          ],
+          "warning": null
+        }
+      ],
+      "recommendation": {
+        "batch_seconds": 4.0,
+        "median_sustained_rtf": 0.02507178946980275,
+        "worst_sustained_rtf": 0.025558366597397252,
+        "max_observed_queue_seconds": 1.5949492920190096,
+        "keeps_up_with_headroom": true
+      },
+      "fingerprint": [
+        {
+          "name": "config.json",
+          "size": 244093,
+          "modified_ns": "1789234532494594406"
+        },
+        {
+          "name": "model.safetensors",
+          "size": 2508288736,
+          "modified_ns": "1789234646490756289"
+        }
+      ]
+    }
+  ],
+  "resumed_at": "2026-09-16T05:24:10.685637+00:00"
+}

@@ -80,6 +80,8 @@ pub enum Event {
     RecordingStopped,
     LiveProgress {
         seconds: f32,
+        /// Rolling inference seconds per audio second; above 1 falls behind.
+        rtf: Option<f32>,
     },
     /// Current, replaceable text; only committed segments are exported.
     LivePartial(Segment),

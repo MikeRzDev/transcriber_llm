@@ -27,7 +27,7 @@ pub(super) fn draw_recording(frame: &mut Frame, area: Rect, app: &App) {
         Constraint::Length(3),
         Constraint::Min(3),
         Constraint::Length(3),
-        Constraint::Length(5),
+        Constraint::Length(6),
     ])
     .split(inner);
     let time = crate::format::clock_time((live.seconds * 1000.0) as i64);
@@ -85,11 +85,23 @@ pub(super) fn draw_recording(frame: &mut Frame, area: Rect, app: &App) {
         .wrap(Wrap { trim: true }),
         rows[2],
     );
+    let speed = match live.inference_rtf {
+        Some(rtf) => format!(
+            "{rtf:.2}s/audio s · {}",
+            if rtf > 1.0 {
+                "falling behind"
+            } else {
+                "keeping up"
+            }
+        ),
+        None => "Measuring inference speed…".into(),
+    };
     frame.render_widget(
         Paragraph::new(format!(
-            " {}\n {:.1}s pending audio\n R  stop & export\n G  follow latest text\n a  choose microphone",
+            " {}\n {:.1}s pending audio\n {}\n R  stop & export\n G  follow latest text\n a  choose microphone",
             live.mode,
-            (live.seconds - live.decoded_seconds).max(0.0)
+            (live.seconds - live.decoded_seconds).max(0.0),
+            speed,
         ))
         .style(Style::default().fg(ACCENT))
         .wrap(Wrap { trim: true }),

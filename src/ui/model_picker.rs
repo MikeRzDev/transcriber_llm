@@ -1,3 +1,4 @@
+use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
@@ -8,7 +9,7 @@ use crate::ui::layout::centered_rect;
 use crate::ui::theme::{highlight_style, ACCENT, DIM};
 
 pub(super) fn draw_model_picker(frame: &mut Frame, app: &App) {
-    let area = centered_rect(60, 40, frame.area());
+    let area = centered_rect(85, 75, frame.area());
     frame.render_widget(Clear, area);
 
     let block = Block::default()
@@ -44,33 +45,52 @@ pub(super) fn draw_model_picker(frame: &mut Frame, app: &App) {
                 Span::raw(m.display_name()),
                 Span::styled(format!("  {}", m.size_human()), Style::default().fg(DIM)),
             ];
-            if m.is_dir {
-                if let Some(reason) = app.picker.live_notes.get(&m.path) {
-                    spans.push(Span::styled(
-                        if reason.is_none() {
-                            "  live ✓"
-                        } else {
-                            "  live unavailable"
-                        },
-                        Style::default().fg(if reason.is_none() { Color::Green } else { DIM }),
-                    ));
-                }
-            }
             if !crate::hw::fits(m.size_bytes) {
                 spans.push(Span::styled(
                     "  ⚠ exceeds this Mac's memory",
                     Style::default().fg(Color::Yellow),
                 ));
             }
-            ListItem::new(Line::from(spans))
+            let (live_label, color) = if app
+                .picker
+                .live_notes
+                .get(&m.path)
+                .is_some_and(|reason| reason.is_some())
+            {
+                ("Live: unavailable".into(), DIM)
+            } else if let Some(fit) = app.picker.live_fit.get(&m.path) {
+                use crate::live_benchmark::LiveFit;
+                let color = match fit {
+                    LiveFit::Good { .. } => Color::Green,
+                    LiveFit::Borderline { .. } => Color::Yellow,
+                    LiveFit::TooSlow { .. } => Color::Red,
+                };
+                (fit.label(), color)
+            } else {
+                ("Live: not benchmarked on this Mac".into(), DIM)
+            };
+            ListItem::new(vec![
+                Line::from(spans),
+                Line::from(Span::styled(
+                    format!("  {live_label}"),
+                    Style::default().fg(color),
+                )),
+            ])
         })
         .collect();
 
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(highlight_style());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let rows = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(inner);
+    let list = List::new(items).highlight_style(highlight_style());
 
     let mut state = ListState::default();
     state.select(Some(app.picker.selected));
-    frame.render_stateful_widget(list, area, &mut state);
+    frame.render_stateful_widget(list, rows[0], &mut state);
+    frame.render_widget(
+        Paragraph::new("Measured on this Mac · below 1s/audio s keeps up.\nLive ratings only; every model remains selectable.\n↑↓ select · Enter use · Esc close")
+            .style(Style::default().fg(DIM))
+            .wrap(Wrap { trim: true }),
+        rows[1],
+    );
 }

@@ -1,0 +1,683 @@
+{
+  "runtime": {
+    "mlx": "0.32.2",
+    "mlx-audio": "0.5.3",
+    "numpy": "2.5.3"
+  },
+  "hardware": {
+    "hw.memsize": "25769803776",
+    "hw.model": "Mac16,12",
+    "machdep.cpu.brand_string": "Apple M4"
+  },
+  "timestamp": "2026-09-16T04:59:18.799518+00:00",
+  "machine": "macOS-26.5.1-arm64-arm-64bit",
+  "python": "3.12.13 (main, Jun 23 2026, 15:44:24) [Clang 22.1.3 ]",
+  "audio": "/Users/mike-axionomic/Documents/AI/transcriber_llm/samples/benchmark-es-120s.wav",
+  "audio_sha256": "eecad65ef2447198426f44b81925d030cf8d9caf302f08af16712e7922c4bc6f",
+  "audio_seconds": 120.0,
+  "language": "es",
+  "repeats": 1,
+  "models": [
+    {
+      "model": "Voxtral-Mini-4B-Realtime-2602-4bit",
+      "path": "/Volumes/MikeExternal/ai_models/speech-to-text-realtime/Voxtral-Mini-4B-Realtime-2602-4bit",
+      "trials": [
+        {
+          "status": "ok",
+          "native": true,
+          "batch_seconds": 1.0,
+          "load_seconds": 4.772541124955751,
+          "audio_seconds": 120.0,
+          "first_chunk_seconds": 0.8535990830278024,
+          "sustained_rtf": 1.445639101220375,
+          "end_to_end_rtf": 1.4546754096537673,
+          "finish_seconds": 2.147905624937266,
+          "max_request_seconds": 2.332931875018403,
+          "simulated_peak_queue_seconds": 32.942447453620844,
+          "simulated_drain_after_stop_seconds": 55.707450075424276,
+          "queue_growth_seconds_per_wall_minute": 18.49586528937313,
+          "observed_buffer_allowance_seconds": null,
+          "segments": [
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción en tiempo real.",
+            "Necesitamos escuchar todas las palabras sin perder información cuando el sistema está ocupado.",
+            "Esta prueba utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto tarda cada fragmento. Si el procesamiento es más lento que la voz, el audio pendiente seguirá aumentando. Al terminar guardaremos los resultados para elegir una configuración adecuada para este",
+            "equipo. Buenos días, hoy vamos a comprobar la velocidad de la transcripción en tiempo real.",
+            "Necesitamos escuchar todas las palabras sin perder información cuando el sistema está ocupado.",
+            "Esta prueba utiliza la misma grabación para comparar los diferentes modelos.",
+            "Primero revisamos el tiempo de carga y después medimos cuánto tarda cada fragmento.",
+            "Si el procesamiento es más lento que la voz, el audio pendiente seguirá aumentando. Al terminar guardaremos los resultados para elegir una configuración adecuada para este equipo. Buenos días, hoy vamos a comprobar la velocidad de la transcripción en tiempo",
+            "real.",
+            "Necesitamos escuchar todas las palabras sin perder información cuando el sistema está ocupado. Esta prueba utiliza la misma grabación para comparar los diferentes modelos. Primero revisamos el tiempo de carga y después medimos cuánto tarda cada",
+            "fragmento. Si el procesamiento es más lento que la voz, el audio pendiente seguirá aumentando. Al terminar guardaremos los resultados para elegir una configuración adecuada para este equipo.",
+            "Buenos días, hoy vamos a comprobar la velocidad de la transcripción en tiempo real.",
+            "Necesitamos escuchar todas las palabras sin perder información cuando el sistema está ocupado. Esta prueba utiliza la misma grabación para comparar los diferentes modelos. Primero revisamos el tiempo de carga y después medimos cuánto tarda cada",
+            "fragmento."
+          ],
+          "chunks": [
+            {
+              "start": 0.0,
+              "end": 1.0,
+              "elapsed": 0.8535990830278024
+            },
+            {
+              "start": 1.0,
+              "end": 2.0,
+              "elapsed": 1.1630425830371678
+            },
+            {
+              "start": 2.0,
+              "end": 3.0,
+              "elapsed": 1.4628377920016646
+            },
+            {
+              "start": 3.0,
+              "end": 4.0,
+              "elapsed": 1.2395283338846639
+            },
+            {
+              "start": 4.0,
+              "end": 5.0,
+              "elapsed": 1.2596370830433443
+            },
+            {
+              "start": 5.0,
+              "end": 6.0,
+              "elapsed": 1.131169458036311
+            },
+            {
+              "start": 6.0,
+              "end": 7.0,
+              "elapsed": 1.4245757500175387
+            },
+            {
+              "start": 7.0,
+              "end": 8.0,
+              "elapsed": 1.4602994580054656
+            },
+            {
+              "start": 8.0,
+              "end": 9.0,
+              "elapsed": 1.1860744999721646
+            },
+            {
+              "start": 9.0,
+              "end": 10.0,
+              "elapsed": 1.1956618749536574
+            },
+            {
+              "start": 10.0,
+              "end": 11.0,
+              "elapsed": 1.3004234581021592
+            },
+            {
+              "start": 11.0,
+              "end": 12.0,
+              "elapsed": 1.141928166965954
+            },
+            {
+              "start": 12.0,
+              "end": 13.0,
+              "elapsed": 1.2971597919240594
+            },
+            {
+              "start": 13.0,
+              "end": 14.0,
+              "elapsed": 1.1143003329634666
+            },
+            {
+              "start": 14.0,
+              "end": 15.0,
+              "elapsed": 1.2851899999659508
+            },
+            {
+              "start": 15.0,
+              "end": 16.0,
+              "elapsed": 1.1978279580362141
+            },
+            {
+              "start": 16.0,
+              "end": 17.0,
+              "elapsed": 1.3960964999860153
+            },
+            {
+              "start": 17.0,
+              "end": 18.0,
+              "elapsed": 1.2321077500237152
+            },
+            {
+              "start": 18.0,
+              "end": 19.0,
+              "elapsed": 1.2938558750320226
+            },
+            {
+              "start": 19.0,
+              "end": 20.0,
+              "elapsed": 1.2120367080206051
+            },
+            {
+              "start": 20.0,
+              "end": 21.0,
+              "elapsed": 1.3254350420320407
+            },
+            {
+              "start": 21.0,
+              "end": 22.0,
+              "elapsed": 1.5574857919709757
+            },
+            {
+              "start": 22.0,
+              "end": 23.0,
+              "elapsed": 1.1593810829799622
+            },
+            {
+              "start": 23.0,
+              "end": 24.0,
+              "elapsed": 1.1900690839393064
+            },
+            {
+              "start": 24.0,
+              "end": 25.0,
+              "elapsed": 1.3338992079952732
+            },
+            {
+              "start": 25.0,
+              "end": 26.0,
+              "elapsed": 1.196455999976024
+            },
+            {
+              "start": 26.0,
+              "end": 27.0,
+              "elapsed": 1.2798722080187872
+            },
+            {
+              "start": 27.0,
+              "end": 28.0,
+              "elapsed": 1.279294791049324
+            },
+            {
+              "start": 28.0,
+              "end": 29.0,
+              "elapsed": 1.4833216249244288
+            },
+            {
+              "start": 29.0,
+              "end": 30.0,
+              "elapsed": 1.4339533330639824
+            },
+            {
+              "start": 30.0,
+              "end": 31.0,
+              "elapsed": 1.416403584065847
+            },
+            {
+              "start": 31.0,
+              "end": 32.0,
+              "elapsed": 1.1519521659938619
+            },
+            {
+              "start": 32.0,
+              "end": 33.0,
+              "elapsed": 1.2855943749891594
+            },
+            {
+              "start": 33.0,
+              "end": 34.0,
+              "elapsed": 1.2336063750553876
+            },
+            {
+              "start": 34.0,
+              "end": 35.0,
+              "elapsed": 1.1827891248976812
+            },
+            {
+              "start": 35.0,
+              "end": 36.0,
+              "elapsed": 1.1386081670643762
+            },
+            {
+              "start": 36.0,
+              "end": 37.0,
+              "elapsed": 1.2848415420157835
+            },
+            {
+              "start": 37.0,
+              "end": 38.0,
+              "elapsed": 1.246242249966599
+            },
+            {
+              "start": 38.0,
+              "end": 39.0,
+              "elapsed": 1.266405166941695
+            },
+            {
+              "start": 39.0,
+              "end": 40.0,
+              "elapsed": 1.1107785839121789
+            },
+            {
+              "start": 40.0,
+              "end": 41.0,
+              "elapsed": 1.3163792919367552
+            },
+            {
+              "start": 41.0,
+              "end": 42.0,
+              "elapsed": 1.1457950830226764
+            },
+            {
+              "start": 42.0,
+              "end": 43.0,
+              "elapsed": 1.3637502919882536
+            },
+            {
+              "start": 43.0,
+              "end": 44.0,
+              "elapsed": 1.227777583990246
+            },
+            {
+              "start": 44.0,
+              "end": 45.0,
+              "elapsed": 1.3250049999915063
+            },
+            {
+              "start": 45.0,
+              "end": 46.0,
+              "elapsed": 1.2709604579722509
+            },
+            {
+              "start": 46.0,
+              "end": 47.0,
+              "elapsed": 1.3607360000023618
+            },
+            {
+              "start": 47.0,
+              "end": 48.0,
+              "elapsed": 1.4056107919896021
+            },
+            {
+              "start": 48.0,
+              "end": 49.0,
+              "elapsed": 1.5214145829668269
+            },
+            {
+              "start": 49.0,
+              "end": 50.0,
+              "elapsed": 1.2019350830232725
+            },
+            {
+              "start": 50.0,
+              "end": 51.0,
+              "elapsed": 1.4608884159242734
+            },
+            {
+              "start": 51.0,
+              "end": 52.0,
+              "elapsed": 1.294153792085126
+            },
+            {
+              "start": 52.0,
+              "end": 53.0,
+              "elapsed": 1.4219047910301015
+            },
+            {
+              "start": 53.0,
+              "end": 54.0,
+              "elapsed": 1.3893897089874372
+            },
+            {
+              "start": 54.0,
+              "end": 55.0,
+              "elapsed": 1.346289874985814
+            },
+            {
+              "start": 55.0,
+              "end": 56.0,
+              "elapsed": 1.3091688340064138
+            },
+            {
+              "start": 56.0,
+              "end": 57.0,
+              "elapsed": 1.3289893330074847
+            },
+            {
+              "start": 57.0,
+              "end": 58.0,
+              "elapsed": 1.4150235409615561
+            },
+            {
+              "start": 58.0,
+              "end": 59.0,
+              "elapsed": 1.3998529580421746
+            },
+            {
+              "start": 59.0,
+              "end": 60.0,
+              "elapsed": 1.392491834005341
+            },
+            {
+              "start": 60.0,
+              "end": 61.0,
+              "elapsed": 1.4154115000274032
+            },
+            {
+              "start": 61.0,
+              "end": 62.0,
+              "elapsed": 2.0992607079679146
+            },
+            {
+              "start": 62.0,
+              "end": 63.0,
+              "elapsed": 1.4692210420034826
+            },
+            {
+              "start": 63.0,
+              "end": 64.0,
+              "elapsed": 1.2779927499359474
+            },
+            {
+              "start": 64.0,
+              "end": 65.0,
+              "elapsed": 1.523829499958083
+            },
+            {
+              "start": 65.0,
+              "end": 66.0,
+              "elapsed": 1.351541250012815
+            },
+            {
+              "start": 66.0,
+              "end": 67.0,
+              "elapsed": 1.5292816660366952
+            },
+            {
+              "start": 67.0,
+              "end": 68.0,
+              "elapsed": 1.3862380409846082
+            },
+            {
+              "start": 68.0,
+              "end": 69.0,
+              "elapsed": 1.5103363330708817
+            },
+            {
+              "start": 69.0,
+              "end": 70.0,
+              "elapsed": 1.404821667005308
+            },
+            {
+              "start": 70.0,
+              "end": 71.0,
+              "elapsed": 1.543664374970831
+            },
+            {
+              "start": 71.0,
+              "end": 72.0,
+              "elapsed": 1.4013327079592273
+            },
+            {
+              "start": 72.0,
+              "end": 73.0,
+              "elapsed": 1.4748847079463303
+            },
+            {
+              "start": 73.0,
+              "end": 74.0,
+              "elapsed": 1.4264398330124095
+            },
+            {
+              "start": 74.0,
+              "end": 75.0,
+              "elapsed": 1.485448500025086
+            },
+            {
+              "start": 75.0,
+              "end": 76.0,
+              "elapsed": 1.4696273329900578
+            },
+            {
+              "start": 76.0,
+              "end": 77.0,
+              "elapsed": 1.61206916696392
+            },
+            {
+              "start": 77.0,
+              "end": 78.0,
+              "elapsed": 1.5029930829769
+            },
+            {
+              "start": 78.0,
+              "end": 79.0,
+              "elapsed": 1.4973367500351742
+            },
+            {
+              "start": 79.0,
+              "end": 80.0,
+              "elapsed": 1.5439148750156164
+            },
+            {
+              "start": 80.0,
+              "end": 81.0,
+              "elapsed": 1.6042375409742817
+            },
+            {
+              "start": 81.0,
+              "end": 82.0,
+              "elapsed": 1.4066540419589728
+            },
+            {
+              "start": 82.0,
+              "end": 83.0,
+              "elapsed": 1.6669189999811351
+            },
+            {
+              "start": 83.0,
+              "end": 84.0,
+              "elapsed": 1.4508007080294192
+            },
+            {
+              "start": 84.0,
+              "end": 85.0,
+              "elapsed": 1.510475083021447
+            },
+            {
+              "start": 85.0,
+              "end": 86.0,
+              "elapsed": 2.05288087495137
+            },
+            {
+              "start": 86.0,
+              "end": 87.0,
+              "elapsed": 1.8771742910612375
+            },
+            {
+              "start": 87.0,
+              "end": 88.0,
+              "elapsed": 1.3565109999617562
+            },
+            {
+              "start": 88.0,
+              "end": 89.0,
+              "elapsed": 1.6782699580071494
+            },
+            {
+              "start": 89.0,
+              "end": 90.0,
+              "elapsed": 1.4845785829238594
+            },
+            {
+              "start": 90.0,
+              "end": 91.0,
+              "elapsed": 1.7118239999981597
+            },
+            {
+              "start": 91.0,
+              "end": 92.0,
+              "elapsed": 1.5128614589339122
+            },
+            {
+              "start": 92.0,
+              "end": 93.0,
+              "elapsed": 1.5746323330095038
+            },
+            {
+              "start": 93.0,
+              "end": 94.0,
+              "elapsed": 1.5947652499889955
+            },
+            {
+              "start": 94.0,
+              "end": 95.0,
+              "elapsed": 1.6070894580334425
+            },
+            {
+              "start": 95.0,
+              "end": 96.0,
+              "elapsed": 1.518573333043605
+            },
+            {
+              "start": 96.0,
+              "end": 97.0,
+              "elapsed": 1.7312059580581263
+            },
+            {
+              "start": 97.0,
+              "end": 98.0,
+              "elapsed": 1.5495277920272201
+            },
+            {
+              "start": 98.0,
+              "end": 99.0,
+              "elapsed": 1.699899791041389
+            },
+            {
+              "start": 99.0,
+              "end": 100.0,
+              "elapsed": 2.332931875018403
+            },
+            {
+              "start": 100.0,
+              "end": 101.0,
+              "elapsed": 1.5021506659686565
+            },
+            {
+              "start": 101.0,
+              "end": 102.0,
+              "elapsed": 1.5623287500347942
+            },
+            {
+              "start": 102.0,
+              "end": 103.0,
+              "elapsed": 1.7564184999791905
+            },
+            {
+              "start": 103.0,
+              "end": 104.0,
+              "elapsed": 1.4548125000437722
+            },
+            {
+              "start": 104.0,
+              "end": 105.0,
+              "elapsed": 1.6498856249963865
+            },
+            {
+              "start": 105.0,
+              "end": 106.0,
+              "elapsed": 1.490397582994774
+            },
+            {
+              "start": 106.0,
+              "end": 107.0,
+              "elapsed": 1.6661527500255033
+            },
+            {
+              "start": 107.0,
+              "end": 108.0,
+              "elapsed": 1.5156868749763817
+            },
+            {
+              "start": 108.0,
+              "end": 109.0,
+              "elapsed": 1.6013964999001473
+            },
+            {
+              "start": 109.0,
+              "end": 110.0,
+              "elapsed": 1.533578958013095
+            },
+            {
+              "start": 110.0,
+              "end": 111.0,
+              "elapsed": 1.6821842499775812
+            },
+            {
+              "start": 111.0,
+              "end": 112.0,
+              "elapsed": 1.5241695829899982
+            },
+            {
+              "start": 112.0,
+              "end": 113.0,
+              "elapsed": 1.9809225840726867
+            },
+            {
+              "start": 113.0,
+              "end": 114.0,
+              "elapsed": 1.6511567919515073
+            },
+            {
+              "start": 114.0,
+              "end": 115.0,
+              "elapsed": 1.536604999913834
+            },
+            {
+              "start": 115.0,
+              "end": 116.0,
+              "elapsed": 1.5558765830937773
+            },
+            {
+              "start": 116.0,
+              "end": 117.0,
+              "elapsed": 1.7314161249669269
+            },
+            {
+              "start": 117.0,
+              "end": 118.0,
+              "elapsed": 1.5632341250311583
+            },
+            {
+              "start": 118.0,
+              "end": 119.0,
+              "elapsed": 1.6444594159256667
+            },
+            {
+              "start": 119.0,
+              "end": 120.0,
+              "elapsed": 1.6615930419648066
+            }
+          ],
+          "warning": null
+        }
+      ],
+      "fingerprint": [
+        {
+          "name": "config.json",
+          "size": 1513,
+          "modified_ns": "1789233898773077314"
+        },
+        {
+          "name": "model.safetensors",
+          "size": 3133798126,
+          "modified_ns": "1789234013721997895"
+        }
+      ],
+      "recommendation": {
+        "batch_seconds": 1.0,
+        "median_sustained_rtf": 1.445639101220375,
+        "worst_sustained_rtf": 1.445639101220375,
+        "max_observed_queue_seconds": 32.942447453620844,
+        "keeps_up_with_headroom": false
+      }
+    }
+  ]
+}

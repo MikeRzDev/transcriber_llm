@@ -49,8 +49,14 @@ impl App {
                     Some(segment)
                 };
             }
-            Event::LiveProgress { seconds } => {
+            Event::LiveProgress { seconds, rtf } => {
                 self.live.decoded_seconds = seconds;
+                if let Some(rtf) = rtf {
+                    self.live.inference_rtf = Some(rtf);
+                    self.job_log.push_tagged("live-speed", &format!(
+                        "inference: {rtf:.2}s per audio second (rolling measurement; above 1.00 falls behind)"
+                    ));
+                }
             }
             Event::LoadingModel(name) => {
                 self.job_log.push(format!("loading model {name}"));

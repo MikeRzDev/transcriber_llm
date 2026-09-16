@@ -110,6 +110,10 @@ fn render_formats(formats: &[ExportFormat]) -> String {
         .join(",")
 }
 
+pub fn live_benchmark_path() -> Option<PathBuf> {
+    Some(config_path()?.parent()?.join("live-benchmarks.json"))
+}
+
 fn config_path() -> Option<PathBuf> {
     // Test isolation hook: point config at a scratch file
     if let Some(p) = std::env::var_os("TRANSCRIBE_STT_CONFIG") {

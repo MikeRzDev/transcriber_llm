@@ -12,6 +12,7 @@ pub mod format;
 pub mod headless;
 pub mod hub;
 pub mod hw;
+pub mod live_benchmark;
 pub mod models;
 pub mod pyrt;
 pub mod split;

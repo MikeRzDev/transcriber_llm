@@ -3,6 +3,7 @@
 /binary/
 /.venv-realtime/
 __pycache__/
+/benchmarks/*.progress.json
 
 # macOS noise
 .DS_Store

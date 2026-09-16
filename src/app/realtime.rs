@@ -17,6 +17,7 @@ pub struct LiveState {
     pub peak: f32,
     pub seconds: f32,
     pub decoded_seconds: f32,
+    pub inference_rtf: Option<f32>,
 }
 
 impl LiveState {

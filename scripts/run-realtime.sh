@@ -13,6 +13,6 @@ fi
 if [ "$#" -gt 0 ] && [ -d "$1" ]; then
     live_models_dir=$1
     shift
-    exec cargo run -- --realtime --models-dir "$live_models_dir" "$@"
+    exec cargo run --release -- --realtime --models-dir "$live_models_dir" "$@"
 fi
-exec cargo run -- --realtime "$@"
+exec cargo run --release -- --realtime "$@"

@@ -1,8 +1,11 @@
 //! Microphone capture lives on its own thread so inference cannot stall the
 //! level meter or stopping the device. The audio queue is bounded: falling
-//! behind fails visibly rather than silently losing speech or growing RAM.
+//! behind stops capture gracefully and drains the recorded speech for export.
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
+use std::sync::mpsc::{
+    channel, sync_channel, Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError,
+    TrySendError,
+};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -13,6 +16,43 @@ use rubato::{
 };
 
 use crate::transcribe::Event;
+
+// Absorb slow first inference and temporary GPU contention without losing
+// speech. Allocated on demand: ~23 MB at 48 kHz mono, never an unbounded queue.
+const CAPTURE_PACKETS: usize = 1200; // 120 seconds at 100 ms per packet
+
+pub struct AudioPackets {
+    receiver: Receiver<Vec<f32>>,
+    // One final packet is retained if the bounded channel fills. It must only
+    // be read AFTER the sender disconnects and every earlier packet is drained.
+    overflow: Arc<Mutex<Option<Vec<f32>>>>,
+}
+
+impl AudioPackets {
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<Vec<f32>, RecvTimeoutError> {
+        match self.receiver.recv_timeout(timeout) {
+            Err(RecvTimeoutError::Disconnected) => self
+                .overflow
+                .lock()
+                .unwrap()
+                .take()
+                .ok_or(RecvTimeoutError::Disconnected),
+            result => result,
+        }
+    }
+
+    pub fn try_recv(&self) -> Result<Vec<f32>, TryRecvError> {
+        match self.receiver.try_recv() {
+            Err(TryRecvError::Disconnected) => self
+                .overflow
+                .lock()
+                .unwrap()
+                .take()
+                .ok_or(TryRecvError::Disconnected),
+            result => result,
+        }
+    }
+}
 
 /// Input-capable CoreAudio devices include built-in, USB and connected
 /// Bluetooth microphones. Enumeration does not start a recording stream.
@@ -60,7 +100,7 @@ fn resolve_input(requested: Option<&str>) -> Result<cpal::Device> {
 }
 
 pub struct Capture {
-    pub packets: Receiver<Vec<f32>>,
+    pub packets: AudioPackets,
     pub sample_rate: u32,
     pub device: String,
     error: Arc<Mutex<Option<String>>>,
@@ -75,7 +115,12 @@ impl Capture {
         stop: Arc<AtomicBool>,
         input_device: Option<String>,
     ) -> Result<Self> {
-        let (tx, packets) = sync_channel(128); // 12.8 seconds at 100 ms per packet
+        let (tx, receiver) = sync_channel(CAPTURE_PACKETS);
+        let overflow = Arc::new(Mutex::new(None));
+        let packets = AudioPackets {
+            receiver,
+            overflow: overflow.clone(),
+        };
         let (ready_tx, ready_rx) = channel();
         let error = Arc::new(Mutex::new(None));
         let worker_error = error.clone();
@@ -91,7 +136,7 @@ impl Capture {
                 let args = Callback {
                     tx,
                     events: events.clone(),
-                    error: worker_error.clone(),
+                    overflow,
                     stop: worker_stop.clone(),
                     cancel: cancel.clone(),
                     channels: config.channels as usize,
@@ -167,7 +212,7 @@ impl Drop for Capture {
 struct Callback {
     tx: SyncSender<Vec<f32>>,
     events: Sender<Event>,
-    error: Arc<Mutex<Option<String>>>,
+    overflow: Arc<Mutex<Option<Vec<f32>>>>,
     stop: Arc<AtomicBool>,
     cancel: Arc<AtomicBool>,
     channels: usize,
@@ -186,12 +231,14 @@ impl Callback {
             peak,
             seconds: self.frames as f32 / self.rate as f32,
         });
-        if matches!(
-            self.tx.try_send(samples),
-            Err(std::sync::mpsc::TrySendError::Full(_))
-        ) && !self.cancel.load(Ordering::Relaxed)
-        {
-            *self.error.lock().unwrap() = Some("Live model cannot keep up: microphone queue exceeded 12 seconds. Stop and select a smaller model".into());
+        if let Err(TrySendError::Full(samples)) = self.tx.try_send(samples) {
+            *self.overflow.lock().unwrap() = Some(samples);
+            self.stop.store(true, Ordering::SeqCst);
+            if !self.cancel.load(Ordering::Relaxed) {
+                let _ = self.events.send(Event::EngineLog(
+                    "Microphone buffer reached 120 seconds. Recording stopped; finishing all captured speech and exporting. Use a smaller model for lower latency.".into(),
+                ));
+            }
         }
     }
 }
@@ -234,6 +281,9 @@ where
                 });
                 if state.pending.len() >= (state.rate / 10) as usize {
                     state.packet();
+                    if state.stop.load(Ordering::Relaxed) {
+                        return;
+                    }
                 }
             }
         },
@@ -331,35 +381,65 @@ mod tests {
     }
 
     #[test]
-    fn callback_drop_flushes_last_samples_and_overflow_is_visible() {
-        for capacity in [0, 2] {
-            let (tx, rx) = sync_channel(capacity);
+    fn slow_consumer_keeps_audio_in_order_and_stops_gracefully_at_capacity() {
+        for capacity in [0, 2, CAPTURE_PACKETS] {
+            let (tx, receiver) = sync_channel(capacity);
+            let overflow = Arc::new(Mutex::new(None));
+            let packets = AudioPackets {
+                receiver,
+                overflow: overflow.clone(),
+            };
             let (events, _) = channel();
-            let error = Arc::new(Mutex::new(None));
-            let callback = Callback {
+            let stop = Arc::new(AtomicBool::new(false));
+            let mut callback = Callback {
                 tx,
                 events,
-                error: error.clone(),
-                stop: Arc::new(AtomicBool::new(true)),
+                overflow,
+                stop: stop.clone(),
                 cancel: Arc::new(AtomicBool::new(false)),
                 channels: 1,
                 rate: 16000,
-                pending: vec![0.1, 0.2, 0.3],
+                pending: Vec::new(),
                 frames: 0,
             };
-            drop(callback);
-            if capacity == 0 {
-                assert!(error
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .unwrap()
-                    .contains("cannot keep up"));
-            } else {
-                assert_eq!(rx.recv().unwrap(), vec![0.1, 0.2, 0.3]);
-                assert!(error.lock().unwrap().is_none());
+            for i in 0..capacity {
+                callback.pending = vec![i as f32; 1600];
+                callback.packet();
+                assert!(!stop.load(Ordering::SeqCst));
             }
+            // Drop also preserves the final partial packet when already full.
+            callback.pending = vec![0.1, 0.2, 0.3];
+            drop(callback);
+            assert!(stop.load(Ordering::SeqCst));
+            for i in 0..capacity {
+                assert_eq!(packets.try_recv().unwrap(), vec![i as f32; 1600]);
+            }
+            assert_eq!(
+                packets.recv_timeout(Duration::ZERO).unwrap(),
+                vec![0.1, 0.2, 0.3]
+            );
+            assert_eq!(packets.try_recv(), Err(TryRecvError::Disconnected));
         }
+    }
+
+    #[test]
+    fn manual_stop_flushes_partial_packet_without_overflow() {
+        let (tx, receiver) = sync_channel(2);
+        let overflow = Arc::new(Mutex::new(None));
+        let (events, _) = channel();
+        drop(Callback {
+            tx,
+            events,
+            overflow: overflow.clone(),
+            stop: Arc::new(AtomicBool::new(true)),
+            cancel: Arc::new(AtomicBool::new(false)),
+            channels: 1,
+            rate: 16000,
+            pending: vec![0.1; 137],
+            frames: 0,
+        });
+        assert_eq!(receiver.recv().unwrap(), vec![0.1; 137]);
+        assert!(overflow.lock().unwrap().is_none());
     }
 
     #[test]

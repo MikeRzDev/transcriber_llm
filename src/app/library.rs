@@ -25,12 +25,14 @@ pub struct ModelPicker {
     pub selected: usize,
     /// Compatibility is checked when opening, never during rendering.
     pub live_notes: std::collections::BTreeMap<PathBuf, Option<String>>,
+    pub live_fit: std::collections::BTreeMap<PathBuf, crate::live_benchmark::LiveFit>,
 }
 
 impl App {
     /// Open the model picker preselected on the current default.
     pub fn open_model_picker(&mut self) {
         self.refresh_models();
+        self.picker.live_fit = crate::live_benchmark::load(&self.library.models);
         self.picker.live_notes = self
             .library
             .models
